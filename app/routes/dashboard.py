@@ -113,7 +113,7 @@ def board_edit(board_id: str, request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/boards/save")
-def board_save(
+async def board_save(
     db: Session = Depends(get_db),
     board_id: str = Form(default=""),
     name: str = Form(...),
@@ -130,6 +130,7 @@ def board_save(
     select_map: str = Form(default="{}"),
     default_for_tags: str = Form(default=""),
     notes: str = Form(default=""),
+    run_automap: str = Form(default="", alias="automap"),
 ):
     board = db.get(BoardConfig, board_id) if board_id else None
     if board is None:
@@ -160,6 +161,23 @@ def board_save(
         pass
 
     db.commit()
+
+    # One-click "Create & auto-map": save, then inspect the live form and fill
+    # the field_map automatically so the operator never writes JSON.
+    if run_automap and board.post_url:
+        result = await automap.automap_board(board)
+        saved = automap.apply_result(board, result, db)
+        n = automap.real_field_count(result["field_map"])
+        if result["bot_challenge"]:
+            msg = f"Saved. Bot-challenge detected — flagged for assisted mode ({result['assist_reason']})."
+        elif saved and "submit" in result["field_map"]:
+            msg = f"Saved and auto-mapped {n} fields + submit button."
+        elif saved:
+            msg = f"Saved and auto-mapped {n} fields — no submit button found; add one to go live."
+        else:
+            msg = "Saved, but auto-map found too few fields (form may need login or didn't render)."
+        return RedirectResponse(url=f"/boards/{board.id}/edit?msg={quote(msg)}", status_code=303)
+
     return RedirectResponse(url="/boards", status_code=303)
 
 

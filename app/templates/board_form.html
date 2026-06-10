@@ -3,7 +3,8 @@
 {% block content %}
 <p><a href="/boards">← Board library</a></p>
 <h1>{{ 'Edit board' if board else 'Add a board' }}</h1>
-<p class="sub">Onboard a board without touching code (R-15). Fill in the name + post URL, save, then <strong>Auto-map from URL</strong> — the <span class="mono">field_map</span> is generated for you.</p>
+<p class="sub">Enter the board's name and post URL — the field mapping is generated
+automatically by opening the live form. You normally never edit JSON by hand.</p>
 
 {% if request.query_params.get('msg') %}
 <div class="flash" style="background:#1f3a2a;color:var(--green)">{{ request.query_params.get('msg') }}</div>
@@ -11,11 +12,9 @@
 
 {% if board %}
 <form method="post" action="/boards/{{ board.id }}/automap" style="margin-bottom:14px">
-  <button class="btn" type="submit">⚡ Auto-map field_map from post URL</button>
-  <span class="muted">Opens the live form, matches fields to the master schema, and fills in the JSON below. Takes ~20–40s.</span>
+  <button class="btn" type="submit">⚡ Auto-map from URL</button>
+  <span class="muted">Re-opens the live form, matches fields to the master schema, and regenerates the mapping. ~20–40s.</span>
 </form>
-{% else %}
-<div class="flash" style="background:#3a2f0b;color:var(--amber)">Save the board first, then an “Auto-map from URL” button will appear here.</div>
 {% endif %}
 
 <form method="post" action="/boards/save">
@@ -33,7 +32,7 @@
     </div>
     <div class="row two">
       <div><label>Homepage URL</label><input type="url" name="url" value="{{ board.url if board else '' }}"></div>
-      <div><label>Post URL</label><input type="url" name="post_url" value="{{ board.post_url if board else '' }}"></div>
+      <div><label>Post URL <span class="muted">(used for auto-mapping)</span></label><input type="url" name="post_url" value="{{ board.post_url if board else '' }}"></div>
     </div>
     <div class="row">
       <div><label>Status</label>
@@ -59,33 +58,38 @@
         </select>
       </div>
     </div>
+    <label>Notes</label>
+    <textarea name="notes" rows="2">{{ board.notes if board else '' }}</textarea>
   </div>
 
-  <div class="panel">
-    <h2 style="margin-top:0">field_map (JSON)</h2>
-    <p class="muted">Maps master fields → form selectors. e.g.
-      <span class="mono">{"title":"#job-title","apply_url":"#apply-link","submit":{"selector":"button[type=submit]","type":"click"}}</span>.
-      Auth boards add a <span class="mono">"login"</span> block.</p>
-    <textarea name="field_map" rows="8" class="mono">{{ board.field_map | tojson(indent=2) if board and board.field_map else '{}' }}</textarea>
+  <!-- Advanced: the mapping is auto-generated; this is a manual override only. -->
+  <details class="panel" {% if board and board.field_map %}open{% endif %}>
+    <summary>Advanced — field mapping JSON (auto-generated; edit only if needed)</summary>
+    <div style="margin-top:14px">
+      <p class="muted">These are filled in automatically by <strong>Auto-map from URL</strong>.
+        Only touch them to fine-tune selectors (e.g. add a confirmed <span class="mono">submit</span> button).</p>
+      <label>field_map</label>
+      <textarea name="field_map" rows="8" class="mono">{{ board.field_map | tojson(indent=2) if board and board.field_map else '{}' }}</textarea>
+      <label>select_map <span class="muted">(dropdown value translations)</span></label>
+      <textarea name="select_map" rows="5" class="mono">{{ board.select_map | tojson(indent=2) if board and board.select_map else '{}' }}</textarea>
 
-    <h2>select_map (JSON)</h2>
-    <p class="muted">Translates standard values → board dropdown values (R-17). e.g.
-      <span class="mono">{"employment_type":{"Full-time":"Full-Time"}}</span>.</p>
-    <textarea name="select_map" rows="5" class="mono">{{ board.select_map | tojson(indent=2) if board and board.select_map else '{}' }}</textarea>
+      {% if board and board.raw_map %}
+      <details style="margin-top:12px">
+        <summary>Original form layout from CSV (reference)</summary>
+        <pre class="desc-preview mono">{{ board.raw_map }}</pre>
+      </details>
+      {% endif %}
+    </div>
+  </details>
 
-    {% if board and board.raw_map %}
-    <details style="margin-top:12px">
-      <summary>Original form map from CSV (reference for building field_map)</summary>
-      <pre class="desc-preview mono">{{ board.raw_map }}</pre>
-    </details>
+  <div class="panel" style="display:flex; gap:12px; align-items:center; margin-top:18px">
+    {% if board %}
+      <button class="btn" type="submit">Save board</button>
+    {% else %}
+      <button class="btn" type="submit" name="automap" value="1">⚡ Create &amp; auto-map from URL</button>
+      <button class="btn secondary" type="submit">Create without mapping</button>
+      <span class="muted">Auto-map opens the live form and fills the mapping for you (~20–40s).</span>
     {% endif %}
-  </div>
-
-  <label>Notes</label>
-  <textarea name="notes" rows="2">{{ board.notes if board else '' }}</textarea>
-
-  <div class="panel" style="margin-top:18px">
-    <button class="btn" type="submit">Save board</button>
   </div>
 </form>
 {% endblock %}
