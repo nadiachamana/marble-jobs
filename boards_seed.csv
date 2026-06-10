@@ -1,0 +1,236 @@
+Name,Tier,URL,URL to post,Ashby Tracker,Automation Status,Distribution,Contact Email,Map,Code-tracker,Eligibility,Type,Region,Category,Seniority Target,Field,Posted Positions,Notes
+Innovators Room,⭐️⭐️⭐️⭐️,https://www.innovatorsroom.com/add-job,https://www.innovatorsroom.com/add-job,https://jobs.ashbyhq.com/marble?utm_source=0qx9q9Pe1b,Mapped,Playwright (simple),,"Company:* [text]
+Role:* [text]
+Location:* [text]
+Application url:* [url]
+Your work email:*
+Your Name:*",innovators-room,Free,Job Board,Worldwide,Commercial,"Intern,Founder,First Hire",Business and Investment,"Principal,""Associate, Energy Systems"",Programme Analyst,Right Hand CEO,""FiR, Geothermal"",""Associate, Talent"",""FiR, Advanced Biofuels"",""FiR, Wastewater"",""FiR, Clean Cooling""",To email them
+KU Leuven - Alumni,⭐️⭐️⭐️⭐️,https://kuleuven.jobteaser.com/en/backend/job-offers,https://kuleuven.jobteaser.com/en/backend/job-offers,https://jobs.ashbyhq.com/marble?utm_source=AwjPMPjZDD,Mapped,Playwright (authentication),,"Title
+Contract type
+Fixed or minimum duration
+Maximum duration (optional)
+Job category
+Start date (MM/YYYY)
+Locations
+Remote work
+Tags (optional)
+Study level needed
+Salary range
+Minimum amount
+Maximum amount
+Currency
+Frequency
+External reference (optional)
+Job description (Students mainly use keywords in their searches. Please make sure you include all the important terms in your description.)",ku-leuven,Free,Institutional Job Board,Europe,Technical,"Founder,First Hire",,"""Associate, Energy Systems"",""FiR, Geothermal"",""FiR, Advanced Biofuels"",""FiR, Wastewater"",Inflection",
+Startup & VC,⭐️⭐️⭐️⭐️,https://www.startupandvc.com/venture-capital-jobs,https://www.startupandvc.com/post-job,https://jobs.ashbyhq.com/marble?utm_source=ajRMJMJqby,Mapped,Playwright (simple),,"Title of Role*
+[]Full-time []Part-time []Internship []Remote []Other
+Country
+City
+Job Description
+Application Url
+Application Email
+Company name
+URL
+Invoice Email
+Invoice Address",startup-vc,Paid,Job Board,Worldwide,"Technical,Commercial",,,,
+KTH,⭐️⭐️⭐️,https://www.kth.se/en/samverkan/exjobb/uppdragsgivare/annonsera-exjobb-1.283972,https://kth-exjobb.powerappsportals.com/en-US/L%C3%A4gg-upp-annons/Create-Uppdrag/,https://jobs.ashbyhq.com/marble?utm_source=xyeO2OzZp5,Mapped,Playwright (authentication),,"Organization/Company* [lookup]
+Contact* [pre-filled: Nadia Chamana]
+Headline* [max 256 chars]
+Assignment Type* [Degree project / Seasonal and part time jobs]
+Location
+Credits [30 hp / 15 hp / 15-30 hp]
+Publish date* [YYYY-MM-DD]
+Deadline for application* [YYYY-MM-DD, within 6 months]
+Application Channel* [Email / URL / Both]
+Application Documents [CV, personal letter, transcripts, etc.]
+Application Email [if Email or Both]
+Application URL [if URL or Both — must link to the job ad]",kth,Free,Institutional Job Board,Europe,Technical,Intern,Generalist,,Possible to post only internships
+UniAgro network,⭐️⭐️⭐️,https://www.uniagro.fr/gene/main.php?base_id_ref=177,https://www.uniagro.fr/espace-emploi/depot-offre,https://jobs.ashbyhq.com/marble?utm_source=gBqVBVay6V,Mapped,Playwright (authentication),,"Titre de l'offre*
+Référence [optional]
+Client* [pre-filled: Marble]
+Description de la société [optional]
+Description de la mission*
+Type de contrat* [CDI / CDD / Stage / Alternance / Apprentissage / Thèse / Post-Doc / VIE-VIA-VSI / Service civique / Autre]
+Date début
+Durée [if CDD or Stage: 10-12 semaines / 6 mois / 1 an / 18 mois / 2 ans / 3 ans]
+Profil [multi-select]
+Secteur [multi-select]
+Description du profil [optional]
+Expérience [Aucune / Débutant -3 ans / Expérimenté 3-10 ans / Confirmé +10 ans]
+Télétravail [Pas / Partiel / Ponctuel / Total]
+Localisation
+Code localisation [Indéfini / Province / Paris région parisienne / Etranger hors UE / DOM-TOM / Union Européenne]
+Pays [dropdown, default: France]
+Rémunération [Indéfinie / -de 20 / 20-30 / ... / +de 150 k€]
+Disponibilité [Immédiate / 1 mois / 2 mois / 3 mois et plus]
+Langue [multi-select]
+Date limite de candidature
+Pièce jointe [Word/PDF max 5MB, optional]
+Nom du contact [pre-filled: Chamana Nadia]
+Téléphone
+Email du contact pre-filled: [hiring@marble.studio]
+URL pour postuler
+Mise en ligne sur le site [Oui/Non]
+
+LinkedIn
+
+ClimateBase
+
+LinkedIn Groups",uniagro-network,Free,Job Board,Europe,Technical,,Bio & Life Sciences,"""FiR, Advanced Biofuels"",""FiR, Wastewater""","(AgroParisTech, Institut Agro Montpellier, Agrocampus Ouest, ENSAIA, INP-ENSAT, and AgroSup Dijon graduates)"
+Climate Job List,⭐️⭐️⭐️,https://www.climatejobslist.com/,https://www.climatejobslist.com/post,https://jobs.ashbyhq.com/marble?utm_source=6jP2J2dApG,Mapped,Playwright (simple),,"'- **Job Title***
+    
+    Please specify as single job position like ""Marketing Manager"" not a sentence like ""Looking for PM / Biz Dev / Manager"". DO NOT WRITE IN FULL CAPS. If posting multiple roles, please create multiple job posts or Contact Us. A job post is limited to a single job.
+    
+- **Company Name***
+    
+    Your company's trade name without Inc., Ltd., etc.
+    
+- **Job Description***
+- **Apply URL**
+    
+    Destination link to where candidates can make an application (https://)
+    
+- **Apply Email**
+    
+    This email is public, the Apply button links to it if you do not supply an Apply URL.
+    
+- **Job Type***
+- **Job Level***
+- **Job Location City***
+    
+    Required - if Remote then write Remote.
+    
+    Job location Country * [dropdown]
+    
+    - **Primary Category* [dropdown]**
+        
+        Please Select               Academia / Research               Business Development               Customer Support               Design               Hardware Development               Legal, Regulatory & Compliance               Marketing               Operations               Quality Assurance               Sales               Software Development             This primary category shows first and increases visibility in the main sections. Your job will also be shown on all Additional Tags pages.
+        
+    - **Additional Tags (like Industry / Tech Stack etc) - text field**
+    - **Your Name***
+        
+        First Name - this will be kept private and used only for invoicing / listing management.Last Name - this will be kept private and used only for invoicing / listing management.
+        
+    - **Contact Email***
+        
+        example@climatetech.com - this will be kept private and used only for invoicing / listing management.
+        
+    - Post your Job [button]",climate-job-list,Paid,Job Board,Worldwide,Technical,"Founder,First Hire",Environmental and Climate,"Principal,""Associate, Energy Systems"",Programme Analyst",It's free (no promotion) and paid: 149$ per job
+Climate career Portal,⭐️⭐️⭐️,https://www.climatecareerportal.com/,https://www.climatecareerportal.com/jobs/new,https://jobs.ashbyhq.com/marble?utm_source=Q7nKdKNJop,Mapped,Playwright (authentication),,"Company Name:* [text]
+Job Title:* [text]
+Location:* [state selection]; [province/state text]; City
+Job Description*
+Job Posting Linkl:* [url]
+Expiry date:* dd/mm/yyyy",climate-career-portal,Free,Job Board,Worldwide,Technical,"Founder,First Hire",Environmental and Climate,"""CEO, Battery""",
+MIT Orbit,⭐️⭐️⭐️,https://orbit.mit.edu/,https://orbit.mit.edu/jobs/new,https://jobs.ashbyhq.com/marble?utm_source=6lDgJgeyPl,Mapped,Playwright (simple),,"Full Name
+Contact Email
+LinkedIn Profile
+Company
+Role
+Role type [select an option]
+What are the functions related to this role?
+[]accounting & Finance; [] Administration; []customer service; []data science; []design(graphics/marketing; []design(ui/ux); [] IT; []legal []marketing % communications []operations [] people&hr [] product [] quality assurance [] sales & business development [] softaware engineering [] AI/ML Engineering []Hardaware engineering [] mechanical engineering [] chemical engineering [] bio engineering []other
+
+Industry
+Expected 'Software' | 'Healthcare' | 'Wellness' | 'Energy' | 'FinTech' | 'Arts' | 'Education' | 'Social Entrepreneurship' | 'Sustainability' | 'Real Estate' | 'Corporate' | 'Hardware' | 'Hard Tech' | 'Global' | 'Robotics' | 'AI' | 'Civil' | 'Non-Profit' | 'Other' | 'All Interests', received '’
+
+Do you have a description of your company or what your team is working on? *
+How would you describe this role? *
+What should students know about this opportunity?
+URL
+Pitching Video
+Are You Presenting at MIT's Pitch2Match?* Yes/No
+Do you have a slide you would like included?
+Is there anything else we should know?",mit-orbit,Free,Job Board,North America,"Technical,Commercial","Founder,First Hire,Intern",Business and Investment,Programme Analyst,
+Tech Uni Munich,⭐️⭐️,https://jobportal.community.tum.de/companies/register,https://jobportal.community.tum.de/,https://jobs.ashbyhq.com/marble?utm_source=gnYpnpmBPw,Mapped,Playwright (authentication),,"Position
+Type of Job
+Description (Qualification, Tasks)
+Keywords (separated by commas)
+Disciplines
+Salary
+Working hours
+Location
+Country
+Working language
+PDF Attachment (only shown when PRO or PREMIUM Job Ad is booked)
+Name of the company
+Address of the company
+Contact person
+Phone
+Email for questions
+Email for job applications
+Notes for the Application
+Link",tech-uni munich,Free,Institutional Job Board,Europe,Technical,"Intern,Founder,First Hire",Generalist,"""FiR, Advanced Biofuels"",""FiR, Wastewater"",Inflection",
+EU Startups,⭐️⭐️,https://www.eu-startups.com/startup-jobs/post-a-job/,https://www.eu-startups.com/startup-jobs/post-a-job/,https://jobs.ashbyhq.com/marble?utm_source=NP8V2VR3q9,Mapped,Playwright (simple),,"**Co-Founder, CEO (Next-Gen Geothermal) POSTED : LINK**
+
+Co-Founder, CTO (Construction Robotics) **POSTED : LINK**
+
+**Co-Founder, CTO (industrial intelligence platform) POSTED: LINK
+Associate, Energy Hardware & Physics NOT POSTED WAITING**
+
+**Job Information (sections)**
+
+**Title * : enter Job Title Here**
+
+**Description * : Fomattable long text**
+
+**Company Information**
+
+**Job Type : drop down single choice ( Full-Time / Part-time / Contractor / Intern)**
+
+**Category : drop down single choice (Business & Finance / Coding & Tech stuff / Marketing, Pr & sales / Design, UX & Product / Other startup Jobs)** 
+
+**Company Name * : Short Text**
+
+**Contact Email * : Short Text**
+
+**Logo * : upload image** 
+
+**Address + VAT number :** Information needed in case of Premium Job Ads
+
+**Location**
+
+**Country * : Drop down choice**
+
+**City * : Short text**
+
+**Your Listing**
+
+**Listing Type * : single choice**
+
+1. Premium [Featured]**€75.00** Visible 50 days 
+2. Basic [Free]**€0.00** Visible 50 days","eu-startups
+",Free,Job Board,Europe,,,,"""FiR, Geothermal"",""FiR, Advanced Biofuels""",
+Conservation Job Board,Secondary,https://www.conservationjobboard.com/,https://www.conservationjobboard.com/job-post/fkJD65ivU2SoFoFYQJR5rulgKnYtenXWDT7DcAk8,https://jobs.ashbyhq.com/marble?utm_source=A25kokd4kx,Mapped,Playwright (authentication),,"First Name [not displayed]
+Last Name [not displayed]
+Phone Number [not displayed]
+Job Type* [Permanent / Temporary / Faculty Postdoc / Paid Internship / Student / AmeriCorps / Unpaid]
+Employer Name*
+Job Opening Title*
+City
+Location [dropdown: Africa / Asia / Australia / Canada / Europe / Latin America / Other / Remote Flexible / US States]
+Minimum Experience* [0-1 year / 2-4 years / 5+ years]
+Salary By [Range / Single Amount / Text]
+Salary Min / Max + Per [Hour / Day / Week / Month / Year]
+Benefits [optional]
+Job Description [rich text]
+Application Instructions [rich text]
+Application Deadline [optional]",conservation-job board,Free,Job Board,Worldwide,"Technical,Commercial","Founder,First Hire",Environmental and Climate,,
+International Women in Mining,Secondary,https://internationalwim.org/jobs/,https://internationalwim.org/jobs/,https://jobs.ashbyhq.com/marble?utm_source=Mr4qRqbjnY,Mapped,Email,cfernandez@internationalwim.org,"Point of contact: cfernandez@internationalwim.org
+
+In order to post job opportunities, we need the following information:
+
+· Job title
+
+· Job description, including location
+
+· URL of where to apply or instructions for the candidate on how to apply, such as an e-mail address or specific portal.
+
+· Include the closing date or deadline for application. If ongoing, please indicate.
+
+· Your logo and any images or videos you may want inserted alongside the position (jpg. or png format).
+
+· References to your social media platforms and any preferred hashtags
+
+· Contact information and company details for the invoice process.",international-women-in-mining,Paid,Community,Worldwide,Technical,"Founder,First Hire",Geoscience,,USD 200.00 per JD
+Geothermal Rising,Secondary,https://geothermal.org/,https://geothermal.org/resources/job-board,https://jobs.ashbyhq.com/marble?utm_source=NpOenebpwd,Mapped,Email,Kam@geothermal.org,Send us your geothermal energy vacancies and we will post them for free for 30 days. Please email a single page PDF or Word DOC to Kam Noren Kam@geothermal.org,geothermal-rising,Free,Community,Worldwide,Technical,"Founder,First Hire",Geoscience,"""FiR, Geothermal""",Kam@geothermal.org

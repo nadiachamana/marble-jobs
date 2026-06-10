@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Board library · Marble{% endblock %}
+{% block content %}
+<h1>Board library</h1>
+<p class="sub">{{ boards|length }} configured boards. Adding a board is a row, not a code change.</p>
+
+<div class="panel">
+  <table>
+    <thead>
+      <tr><th>Board</th><th>Type</th><th>Status</th><th>Region / field</th><th>Map</th><th>Last used</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for b in boards %}
+      <tr>
+        <td><strong>{{ b.name }}</strong> {% if b.is_paid %}<span class="badge paid">PAID</span>{% endif %}
+            <br><a class="mono" href="{{ b.post_url or b.url }}" target="_blank">{{ (b.post_url or b.url or '')[:48] }}</a></td>
+        <td>{{ b.distribution_type.value.replace('_', ' ') }}</td>
+        <td><span class="badge {{ b.status.value }}">{{ b.status.value }}</span></td>
+        <td class="muted">{{ b.meta.get('region') or '—' }}{% if b.meta.get('field') %}<br>{{ b.meta.get('field') }}{% endif %}</td>
+        <td>{% if b.field_map %}<span class="badge success">✓</span>{% else %}<span class="badge incomplete">none</span>{% endif %}</td>
+        <td class="muted">{{ b.last_used_at.strftime('%b %d') if b.last_used_at else '—' }}</td>
+        <td><a class="btn small secondary" href="/boards/{{ b.id }}/edit">Edit</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

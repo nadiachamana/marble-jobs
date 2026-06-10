@@ -1,0 +1,18 @@
+{
+  "data": {
+    "jobPosting": {
+      "id": "b20e954f-2bf7-47e0-b039-472d6e987593",
+      "title": "Co-Founder, CTO (Next-Gen Geothermal)",
+      "jobId": "602580ba-1835-436f-8e33-cb16c7d103cc",
+      "locationName": "USA",
+      "workplaceType": null,
+      "employmentType": "FullTime",
+      "isListed": true,
+      "publishedDate": "2026-06-04T14:14:00.820Z",
+      "applicationDeadline": { "deadline": "2026-04-14T22:00:00.000Z" },
+      "externalLink": "https://jobs.ashbyhq.com/marble/b20e954f-2bf7-47e0-b039-472d6e987593"
+    }
+  },
+  "action": "jobPostingPublish",
+  "webhookActionId": "74844419-65aa-4b8b-a42a-6a7788dd7e55"
+}

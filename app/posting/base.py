@@ -1,0 +1,134 @@
+"""Shared posting primitives: the master field schema and form-fill helpers.
+
+The master field schema (Section 4 of the plan) is the canonical set of values
+every job produces. Boards consume a subset. A board's `field_map` maps these
+master field names onto its own form, so the engines never hardcode a board.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+SCREENSHOT_DIR = Path("data/screenshots")
+ATTACHMENT_DIR = Path("data/attachments")
+
+
+@dataclass
+class PostResult:
+    """Outcome of a single board posting attempt."""
+
+    success: bool
+    result_url: str | None = None        # live posting URL, if the board returns one
+    screenshot_path: str | None = None   # captured on failure for debugging (R-16)
+    error: str | None = None
+    detail: str | None = None            # freeform note (e.g. fields filled)
+
+# Static Marble boilerplate used as the "company description" on every board.
+MARBLE_BOILERPLATE = (
+    "Marble is a climate tech venture studio. We partner with scientists, "
+    "engineers, and operators to create companies solving hard climate problems "
+    "in the world's largest industries. Our first 14 companies are building "
+    "transformative products across energy, industry, agriculture, and climate "
+    "resilience. Learn more at https://marble.studio."
+)
+
+
+def build_master_fields(job, board, resolved_apply_url: str | None) -> dict[str, Any]:
+    """Assemble the canonical field set a board can draw from.
+
+    `resolved_apply_url` is the per-board UTM-tracked apply URL (see utm.py);
+    falls back to the job's base apply URL.
+    """
+    from app.config import get_settings
+
+    settings = get_settings()
+    tags = job.industry_tags or []
+
+    salary = None
+    if job.salary_min:
+        currency = job.salary_currency or ""
+        salary = (
+            f"{currency} {job.salary_min}"
+            if job.salary_min == job.salary_max
+            else f"{currency} {job.salary_min}–{job.salary_max}"
+        ).strip()
+
+    return {
+        "title": job.title,
+        "description_html": job.description_html or "",
+        "description_plain": job.description_plain or "",
+        "company_description": MARBLE_BOILERPLATE,
+        "company_name": "Marble",
+        "apply_url": resolved_apply_url or job.apply_url or "",
+        "work_mode": job.work_mode or "",
+        "country": job.location_country or "",
+        "city": job.location_city or "",
+        "employment_type": job.employment_type or "",
+        "deadline": job.deadline.date().isoformat() if job.deadline else "",
+        "contact_email": settings.marble_contact_email,
+        "contact_name": settings.marble_contact_name,
+        "contact_first_name": settings.marble_contact_name.split(" ", 1)[0],
+        "contact_last_name": (settings.marble_contact_name.split(" ", 1) + [""])[1],
+        "seniority": job.seniority or "",
+        "function_category": job.function_category or "",
+        "industry_tags": ", ".join(tags),
+        "salary": salary or "",
+        "salary_min": str(job.salary_min) if job.salary_min else "",
+        "salary_max": str(job.salary_max) if job.salary_max else "",
+        "salary_currency": job.salary_currency or "",
+    }
+
+
+def translate_value(master_field: str, value: str, select_map: dict) -> str:
+    """Apply a board's select_map to translate a standard value (R-17).
+
+    select_map shape: { "<master_field>": { "<standard value>": "<board value>" } }
+    or a flat { "<standard value>": "<board value>" } applied to any field.
+    """
+    if not select_map:
+        return value
+    field_map = select_map.get(master_field)
+    if isinstance(field_map, dict) and value in field_map:
+        return field_map[value]
+    if value in select_map and isinstance(select_map[value], str):
+        return select_map[value]
+    return value
+
+
+async def fill_form(page, field_map: dict, select_map: dict, fields: dict[str, Any]) -> list[str]:
+    """Fill a form from a board's field_map. Returns the list of filled fields.
+
+    Each field_map entry is either:
+      "master_field": "<css selector>"                      -> type text
+      "master_field": {"selector": "...", "type": "select"} -> dropdown
+      types: fill (default) | select | check | click
+
+    Unknown master fields or empty values are skipped silently so a partial
+    field_map still posts what it can.
+    """
+    filled: list[str] = []
+    for master_field, spec in field_map.items():
+        value = fields.get(master_field)
+        if value in (None, ""):
+            continue
+        selector = spec if isinstance(spec, str) else spec.get("selector")
+        kind = "fill" if isinstance(spec, str) else spec.get("type", "fill")
+        if not selector:
+            continue
+
+        value = translate_value(master_field, str(value), select_map)
+        try:
+            if kind == "select":
+                await page.select_option(selector, label=value)
+            elif kind == "check":
+                await page.check(selector)
+            elif kind == "click":
+                await page.click(selector)
+            else:
+                await page.fill(selector, value)
+            filled.append(master_field)
+        except Exception as exc:  # noqa: BLE001 — surface per-field, keep going
+            raise RuntimeError(f"Failed on field '{master_field}' ({selector}): {exc}") from exc
+    return filled

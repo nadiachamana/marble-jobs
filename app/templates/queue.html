@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Job queue · Marble{% endblock %}
+{% block content %}
+<h1>Job queue</h1>
+<p class="sub">Jobs published from Ashby, awaiting review and dispatch.</p>
+
+<div class="panel">
+  {% if not jobs %}
+    <p class="muted">No jobs yet. They appear here when Ashby fires the <span class="mono">jobPostingPublish</span> webhook.</p>
+  {% else %}
+  <table>
+    <thead>
+      <tr><th>Job</th><th>Status</th><th>Inferred</th><th>Boards</th><th>Created</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for job in jobs %}
+      <tr>
+        <td><a href="/jobs/{{ job.id }}"><strong>{{ job.title }}</strong></a><br>
+            <span class="muted">{{ job.location_city or '—' }}, {{ job.location_country or '—' }}</span></td>
+        <td><span class="badge {{ job.status.value }}">{{ job.status.value }}</span></td>
+        <td class="muted">{{ job.seniority or '—' }} · {{ job.function_category or '—' }}
+          {% if job.industry_tags %}<br>{{ job.industry_tags | join(', ') }}{% endif %}</td>
+        <td class="count">
+          {% set s = summaries[job.id] %}
+          {% if s %}
+            {% if s.success %}<span class="badge success">{{ s.success }} ✓</span>{% endif %}
+            {% if s.failed %}<span class="badge failed">{{ s.failed }} ✗</span>{% endif %}
+            {% if s.in_progress %}<span class="badge in_progress">{{ s.in_progress }} …</span>{% endif %}
+            {% if s.skipped %}<span class="badge skipped">{{ s.skipped }} skip</span>{% endif %}
+          {% else %}<span class="muted">{{ job.selected_board_ids | length }} selected</span>{% endif %}
+        </td>
+        <td class="muted">{{ job.created_at.strftime('%b %d, %H:%M') if job.created_at else '' }}</td>
+        <td><a class="btn small secondary" href="/jobs/{{ job.id }}">Review</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+{% endblock %}

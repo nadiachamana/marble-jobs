@@ -1,0 +1,18 @@
+# Never bake secrets or local state into the image
+.env
+.env.*
+secrets/
+data/
+*.db
+*.sqlite3
+
+# Local board CSV with passwords (sanitized boards_seed.csv is used instead)
+job-boards-airtable.csv
+
+# Python / venv / vcs noise
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.git/
+.DS_Store

@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}{{ job.title }} · Review{% endblock %}
+{% block content %}
+<p><a href="/">← Queue</a></p>
+<h1>{{ job.title }}</h1>
+<p class="sub">
+  <span class="badge {{ job.status.value }}">{{ job.status.value }}</span>
+  · {{ job.employment_type or '—' }} · {{ job.work_mode or '—' }}
+  · Deadline {{ job.deadline.date() if job.deadline else '—' }}
+</p>
+
+{% if request.query_params.get('error') == 'no_boards' %}
+<div class="flash">Select at least one board before dispatching.</div>
+{% endif %}
+
+<!-- Section 1 — auto-filled, read-only -->
+<details class="panel">
+  <summary>Auto-filled from Ashby (read-only)</summary>
+  <div style="margin-top:14px">
+    <div class="row">
+      <div><label>Apply URL (base)</label><div class="mono">{{ job.apply_url or '—' }}</div></div>
+      <div><label>Country</label><div>{{ job.location_country or '—' }}</div></div>
+      <div><label>Department</label><div>{{ job.department or '—' }}</div></div>
+    </div>
+    <label>Description preview</label>
+    <div class="desc-preview">{{ job.description_html | safe if job.description_html else (job.description_plain or '—') }}</div>
+  </div>
+</details>
+
+<form method="post" action="/jobs/{{ job.id }}/dispatch">
+  <!-- Section 2 — confirm or adjust -->
+  <div class="panel">
+    <h2 style="margin-top:0">Confirm or adjust</h2>
+    <div class="row">
+      <div>
+        <label>Seniority</label>
+        <select name="seniority">
+          {% for opt in ['Executive','Senior','Mid','Entry','Intern'] %}
+          <option value="{{ opt }}" {% if job.seniority==opt %}selected{% endif %}>{{ opt }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div><label>Function category</label><input type="text" name="function_category" value="{{ job.function_category or '' }}"></div>
+      <div><label>City</label><input type="text" name="location_city" value="{{ job.location_city or '' }}"></div>
+    </div>
+    <label>Industry tags (comma-separated)</label>
+    <input type="text" name="industry_tags" value="{{ job.industry_tags | join(', ') }}">
+    <div class="row" style="margin-top:4px">
+      <div><label>Salary min</label><input type="number" name="salary_min" value="{{ job.salary_min or '' }}"></div>
+      <div><label>Salary max</label><input type="number" name="salary_max" value="{{ job.salary_max or '' }}"></div>
+      <div><label>Currency</label><input type="text" name="salary_currency" value="{{ job.salary_currency or '' }}"></div>
+    </div>
+    <label>Deadline</label>
+    <input type="date" name="deadline" value="{{ job.deadline.date().isoformat() if job.deadline else '' }}">
+  </div>
+
+  <!-- Section 3 — board selection -->
+  <div class="panel">
+    <h2 style="margin-top:0">Select boards</h2>
+    <p class="muted">Smart defaults pre-checked from tags + department. Paid boards flagged — left for manual handling.</p>
+
+    {% set labels = {'playwright_simple':'Playwright · simple','playwright_auth':'Playwright · authenticated','email':'Email'} %}
+    {% for kind, boards in grouped.items() %}
+      {% if boards %}
+      <h2>{{ labels.get(kind, kind) }} <span class="muted">({{ boards|length }})</span></h2>
+      {% for b in boards %}
+      <div class="board-item">
+        <input type="checkbox" name="board_ids" value="{{ b.id }}"
+               {% if b.id in defaults %}checked{% endif %}
+               id="b_{{ b.id }}">
+        <div style="flex:1">
+          <label for="b_{{ b.id }}" style="margin:0; color:var(--text); display:inline">{{ b.name }}</label>
+          {% if b.is_paid %}<span class="badge paid">PAID</span>{% endif %}
+          {% if b.requires_assist %}<span class="badge queued" title="{{ b.assist_reason }}">ASSIST</span>{% endif %}
+          <span class="badge {{ b.status.value }}">{{ b.status.value }}</span>
+          {% if not b.field_map %}<span class="badge incomplete" title="No field_map yet">no map</span>{% endif %}
+          {% set a = attempts.get(b.id) %}
+          {% if a %}<span class="badge {{ a.status.value }}">{{ a.status.value }}</span>{% endif %}
+          <div class="meta">
+            {{ b.meta.get('region') or '' }}{% if b.meta.get('field') %} · {{ b.meta.get('field') }}{% endif %}
+            {% if b.default_for_tags %} · tags: {{ b.default_for_tags | join(', ') }}{% endif %}
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+      {% endif %}
+    {% endfor %}
+  </div>
+
+  <div class="panel" style="display:flex; gap:12px; align-items:center">
+    <button class="btn" type="submit">Dispatch selected boards</button>
+    <button class="btn secondary" type="submit" formaction="/jobs/{{ job.id }}/review">Save without dispatching</button>
+  </div>
+</form>
+
+<!-- Post-dispatch tracking -->
+{% if job.attempts %}
+<div class="panel">
+  <h2 style="margin-top:0">Posting status</h2>
+  <table>
+    <thead><tr><th>Board</th><th>Status</th><th>Detail / error</th><th>Apply URL used</th><th></th></tr></thead>
+    <tbody>
+      {% for a in job.attempts %}
+      <tr>
+        <td>{{ a.board.name }}</td>
+        <td><span class="badge {{ a.status.value }}">{{ a.status.value }}</span>
+            {% if a.retry_count %}<span class="muted">·{{ a.retry_count }}×</span>{% endif %}</td>
+        <td class="muted">
+          {{ a.error_message or '—' }}
+          {% if a.result_url %}<br><a href="{{ a.result_url }}" target="_blank">live posting ↗</a>{% endif %}
+          {% if a.screenshot_path %}<br><a href="/attempts/{{ a.id }}/screenshot" target="_blank">failure screenshot ↗</a>{% endif %}
+        </td>
+        <td class="mono">{{ a.resolved_apply_url or '—' }}</td>
+        <td>
+          {% if a.status.value in ['failed','skipped','pending_retry'] %}
+          <form method="post" action="/attempts/{{ a.id }}/retry" style="margin:0">
+            <button class="btn small secondary" type="submit">Retry</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}

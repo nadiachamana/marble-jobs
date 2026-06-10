@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit' if board else 'Add' }} board · Marble{% endblock %}
+{% block content %}
+<p><a href="/boards">← Board library</a></p>
+<h1>{{ 'Edit board' if board else 'Add a board' }}</h1>
+<p class="sub">Onboard a board without touching code (R-15). Fill in the name + post URL, save, then <strong>Auto-map from URL</strong> — the <span class="mono">field_map</span> is generated for you.</p>
+
+{% if request.query_params.get('msg') %}
+<div class="flash" style="background:#1f3a2a;color:var(--green)">{{ request.query_params.get('msg') }}</div>
+{% endif %}
+
+{% if board %}
+<form method="post" action="/boards/{{ board.id }}/automap" style="margin-bottom:14px">
+  <button class="btn" type="submit">⚡ Auto-map field_map from post URL</button>
+  <span class="muted">Opens the live form, matches fields to the master schema, and fills in the JSON below. Takes ~20–40s.</span>
+</form>
+{% else %}
+<div class="flash" style="background:#3a2f0b;color:var(--amber)">Save the board first, then an “Auto-map from URL” button will appear here.</div>
+{% endif %}
+
+<form method="post" action="/boards/save">
+  <input type="hidden" name="board_id" value="{{ board.id if board else '' }}">
+  <div class="panel">
+    <div class="row two">
+      <div><label>Name *</label><input type="text" name="name" required value="{{ board.name if board else '' }}"></div>
+      <div><label>Distribution type *</label>
+        <select name="distribution_type">
+          {% for dt in DistributionType %}
+          <option value="{{ dt.value }}" {% if board and board.distribution_type==dt %}selected{% endif %}>{{ dt.value }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    <div class="row two">
+      <div><label>Homepage URL</label><input type="url" name="url" value="{{ board.url if board else '' }}"></div>
+      <div><label>Post URL</label><input type="url" name="post_url" value="{{ board.post_url if board else '' }}"></div>
+    </div>
+    <div class="row">
+      <div><label>Status</label>
+        <select name="status">
+          {% for st in BoardStatus %}
+          <option value="{{ st.value }}" {% if board and board.status==st %}selected{% endif %}>{{ st.value }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div><label>Credentials ref (for auth boards)</label><input type="text" name="credentials_ref" value="{{ board.credentials_ref if board else '' }}" placeholder="e.g. ku-leuven"></div>
+      <div><label>Contact email (for email boards)</label><input type="email" name="contact_email" value="{{ board.contact_email if board else '' }}"></div>
+    </div>
+    <div class="row two">
+      <div><label>UTM source</label><input type="text" name="utm_source" value="{{ board.utm_source if board else '' }}"></div>
+      <div><label>Ashby tracker URL</label><input type="url" name="ashby_tracker_url" value="{{ board.ashby_tracker_url if board else '' }}"></div>
+    </div>
+    <div class="row two">
+      <div><label>Default for tags (comma-separated)</label><input type="text" name="default_for_tags" value="{{ board.default_for_tags | join(', ') if board else '' }}"></div>
+      <div><label>Paid board?</label>
+        <select name="is_paid">
+          <option value="">No</option>
+          <option value="1" {% if board and board.is_paid %}selected{% endif %}>Yes</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2 style="margin-top:0">field_map (JSON)</h2>
+    <p class="muted">Maps master fields → form selectors. e.g.
+      <span class="mono">{"title":"#job-title","apply_url":"#apply-link","submit":{"selector":"button[type=submit]","type":"click"}}</span>.
+      Auth boards add a <span class="mono">"login"</span> block.</p>
+    <textarea name="field_map" rows="8" class="mono">{{ board.field_map | tojson(indent=2) if board and board.field_map else '{}' }}</textarea>
+
+    <h2>select_map (JSON)</h2>
+    <p class="muted">Translates standard values → board dropdown values (R-17). e.g.
+      <span class="mono">{"employment_type":{"Full-time":"Full-Time"}}</span>.</p>
+    <textarea name="select_map" rows="5" class="mono">{{ board.select_map | tojson(indent=2) if board and board.select_map else '{}' }}</textarea>
+
+    {% if board and board.raw_map %}
+    <details style="margin-top:12px">
+      <summary>Original form map from CSV (reference for building field_map)</summary>
+      <pre class="desc-preview mono">{{ board.raw_map }}</pre>
+    </details>
+    {% endif %}
+  </div>
+
+  <label>Notes</label>
+  <textarea name="notes" rows="2">{{ board.notes if board else '' }}</textarea>
+
+  <div class="panel" style="margin-top:18px">
+    <button class="btn" type="submit">Save board</button>
+  </div>
+</form>
+{% endblock %}

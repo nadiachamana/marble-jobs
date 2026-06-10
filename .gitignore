@@ -1,0 +1,24 @@
+# Secrets — never commit
+.env
+secrets/
+# Original board CSV contains login passwords in Username/Password columns.
+# A sanitized copy (boards_seed.csv) is committed for seeding instead.
+job-boards-airtable.csv
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local database & runtime artifacts (db, screenshots, attachments)
+*.db
+*.sqlite3
+data/
+
+# OS
+.DS_Store
+
+# Local tooling & internal planning docs
+.claude/
+*.pdf
