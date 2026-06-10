@@ -51,3 +51,15 @@ app.include_router(dispatch.router)
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
+
+
+if __name__ == "__main__":
+    # Production entrypoint (Docker/Railway): read PORT from the environment in
+    # Python so we never depend on shell `$PORT` expansion, which fails when the
+    # platform runs the start command without a shell.
+    import os
+
+    import uvicorn
+
+    port = int(os.environ.get("PORT", "8000"))
+    uvicorn.run(app, host="0.0.0.0", port=port)

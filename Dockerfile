@@ -9,6 +9,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Railway provides $PORT at runtime.
+# Railway provides $PORT at runtime; app/main.py reads it from the environment
+# directly, so this works whether or not a shell expands variables.
 ENV PORT=8000
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"]
+CMD ["python", "-m", "app.main"]
