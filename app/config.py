@@ -10,6 +10,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -33,12 +34,25 @@ def _load_board_credentials() -> None:
 _load_board_credentials()
 
 
+_SQLITE_DEFAULT = "sqlite:///./data/marble.db"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # App
     app_base_url: str = "http://localhost:8000"
-    database_url: str = "sqlite:///./data/marble.db"
+    database_url: str = _SQLITE_DEFAULT
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def _coerce_blank_db_url(cls, v: str | None) -> str:
+        """A blank/whitespace DATABASE_URL (e.g. an unresolved Railway reference)
+        would crash engine creation. Fall back to local SQLite instead so the app
+        still boots; a warning is logged at engine setup."""
+        if v is None or not str(v).strip():
+            return _SQLITE_DEFAULT
+        return str(v).strip()
 
     # Ashby
     ashby_api_key: str = ""

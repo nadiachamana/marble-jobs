@@ -80,5 +80,13 @@ def init_db() -> None:
     """Create tables if they do not exist. Models must be imported first."""
     from app import models  # noqa: F401  (ensures models register on Base.metadata)
 
+    backend = "SQLite" if settings.is_sqlite else "Postgres"
+    if settings.is_sqlite and not settings.database_url.endswith("marble.db"):
+        print(f"[db] using {settings.database_url}")
+    print(f"[db] connecting to {backend}…")
+    if settings.is_sqlite:
+        print("[db] ⚠ SQLite is ephemeral on Railway — set DATABASE_URL to your "
+              "Postgres connection string for persistent storage.")
     Base.metadata.create_all(bind=engine)
     _add_missing_columns()
+    print("[db] schema ready")
