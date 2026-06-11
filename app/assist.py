@@ -152,6 +152,23 @@ def assist(job_id: str, board_name: str) -> None:
     attempt.resolved_apply_url = resolved
     session.commit()
 
+    # If the job has no description yet (Ashby enrichment may have failed), fetch
+    # the full JD live so assisted mode can fill it.
+    if not (job.description_plain or job.description_html) and job.ashby_job_posting_id and settings.ashby_api_key:
+        try:
+            import anyio
+
+            from app import ashby
+
+            results = anyio.run(ashby.fetch_job_posting, job.ashby_job_posting_id)
+            info = ashby.parse_job_info(results)
+            job.description_plain = info.get("description_plain") or job.description_plain
+            job.description_html = info.get("description_html") or job.description_html
+            session.commit()
+            print("   ✓ fetched the full job description from Ashby")
+        except Exception as exc:  # noqa: BLE001
+            print(f"   ⚠ couldn't fetch description from Ashby: {str(exc)[:70]}")
+
     fields = build_master_fields(job, board, resolved)
     login = (board.field_map or {}).get("login")
     username, password = settings.board_credentials(board.credentials_ref or "")
@@ -168,7 +185,7 @@ def assist(job_id: str, board_name: str) -> None:
             page.goto(board.post_url, wait_until="domcontentloaded", timeout=60000)
             page.wait_for_timeout(2500)
 
-            # Best-effort auto-login if a login block + credentials exist.
+            # Best-effort auto-login for boards whose login page has no CAPTCHA.
             if login and username and password and page.locator(login["password"]).count():
                 try:
                     page.fill(login["username"], username)
@@ -181,25 +198,33 @@ def assist(job_id: str, board_name: str) -> None:
                 except Exception as exc:  # noqa: BLE001
                     print(f"   ⚠ auto-login failed ({str(exc)[:60]}). Log in manually in the window.")
 
+            # Let the human clear any CAPTCHA / login / navigation FIRST, so the
+            # auto-fill runs on the real posting form — not the challenge page.
+            print("\n   In the browser window, get the empty POSTING FORM on screen:")
+            print("     • solve any CAPTCHA / Cloudflare check")
+            print("     • log in if it wasn't automatic")
+            print("     • open the 'post a job' form")
+            input("\n   …then press Enter HERE to auto-fill it. ")
+
             filled, skipped = _fill(page, board, fields)
-            print(f"   ✓ auto-filled {len(filled)} field(s): {', '.join(filled) or '(none)'}")
+            print(f"\n   ✓ auto-filled {len(filled)} field(s): {', '.join(filled) or '(none)'}")
             if skipped:
-                print(f"   ⊘ couldn't auto-fill {len(skipped)} — fill these by hand in the window:")
+                print(f"   ⊘ couldn't auto-fill {len(skipped)} — fill these by hand:")
                 for s in skipped:
                     print(f"       · {s}")
-            print("\n   Job data for copy/paste (board may ask for fields we don't auto-fill):")
+            print("\n   Job data for copy/paste (for any fields we don't auto-fill):")
             print(f"       Company:      Marble")
             print(f"       Role:         {job.title}")
             print(f"       Location:     {fields.get('city') or ''} {fields.get('country') or ''}".rstrip())
-            print(f"       Work mode:    {job.work_mode or '—'}")
+            print(f"       Work mode:    {job.work_mode or 'Hybrid'}")
             print(f"       Employment:   {job.employment_type or 'Full-time'}")
             print(f"       Apply URL:    {resolved}")
             print(f"       Contact:      {fields.get('contact_name')} <{fields.get('contact_email')}>")
             print(f"       Phone:        {fields.get('contact_phone')}")
+            print(f"       Description:  {len(job.description_plain or '')} chars "
+                  f"{'(auto-filled if mapped)' if job.description_plain else '— none available'}")
             print("\n   ─────────────────────────────────────────────")
-            print("   Now in the browser window:")
-            print("     1. Log in if needed   2. solve any CAPTCHA")
-            print("     3. fill the skipped/extra fields   4. click the board's Submit button")
+            print("   Review the form, complete anything left, then click Submit.")
             print("   ─────────────────────────────────────────────")
             input("\n   Press Enter here once you've submitted (or to stop)… ")
 
@@ -210,7 +235,21 @@ def assist(job_id: str, board_name: str) -> None:
                 board.last_used_at = _now()
             attempt.finished_at = _now()
             session.commit()
-            print(f"\n   Recorded: {attempt.status.value}. You can close this.\n")
+
+            # Notify Slack — threaded under the job's original message when present.
+            try:
+                from app.notify import _post_slack
+
+                icon = ":white_check_mark:" if ok else ":x:"
+                _post_slack(
+                    f"{icon} *Assisted posting* — {board.name} → {job.title}: *{attempt.status.value}*",
+                    thread_ts=job.slack_ts,
+                )
+            except Exception:  # noqa: BLE001
+                pass
+
+            db = "the production dashboard" if not settings.is_sqlite else "the local DB"
+            print(f"\n   Recorded: {attempt.status.value} → saved to {db} + Slack. You can close this.\n")
         finally:
             browser.close()
 
