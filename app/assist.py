@@ -28,6 +28,29 @@ settings = get_settings()
 # field_map keys that aren't form fields to fill.
 _CONTROL_KEYS = {"login", "submit", "_success_selector", "_result_url_selector"}
 
+_assist_sessionmaker = None
+
+
+def _session():
+    """Session for the assist tool. Uses ASSIST_DATABASE_URL (e.g. the Railway
+    Postgres public URL) when set, so the local tool can act on real production
+    jobs; otherwise falls back to the normal local database."""
+    global _assist_sessionmaker
+    url = settings.assist_database_url.strip()
+    if not url:
+        return SessionLocal()
+    if _assist_sessionmaker is None:
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+
+        if url.startswith("postgres://"):
+            url = "postgresql://" + url[len("postgres://"):]
+        engine = create_engine(url, pool_pre_ping=True, future=True)
+        _assist_sessionmaker = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        host = url.split("@")[-1].split("/")[0]
+        print(f"[assist] using production database at {host}")
+    return _assist_sessionmaker()
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -106,7 +129,7 @@ def _job_not_found(session, job_id: str) -> None:
 def assist(job_id: str, board_name: str) -> None:
     from playwright.sync_api import sync_playwright
 
-    session = SessionLocal()
+    session = _session()
     job = session.get(JobQueue, job_id)
     if job is None:
         _job_not_found(session, job_id)
@@ -193,7 +216,7 @@ def assist(job_id: str, board_name: str) -> None:
 
 
 def _list(job_id: str) -> None:
-    session = SessionLocal()
+    session = _session()
     job = session.get(JobQueue, job_id)
     if not job:
         _job_not_found(session, job_id)

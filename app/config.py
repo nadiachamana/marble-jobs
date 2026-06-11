@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     # App
     app_base_url: str = "http://localhost:8000"
     database_url: str = _SQLITE_DEFAULT
+    # Optional: a separate DB the LOCAL assisted-posting tool reads from, so it
+    # can act on real jobs in production while normal local dev stays on SQLite.
+    # Set this to the Railway Postgres PUBLIC url. Used only by app/assist.py.
+    assist_database_url: str = ""
 
     @field_validator("database_url", mode="before")
     @classmethod
