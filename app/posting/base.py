@@ -14,6 +14,10 @@ from typing import Any
 SCREENSHOT_DIR = Path("data/screenshots")
 ATTACHMENT_DIR = Path("data/attachments")
 
+# Per-field fill timeout. Short so a wrong/missing selector is skipped quickly
+# instead of stalling the whole posting on Playwright's 30s default.
+FILL_TIMEOUT_MS = 8000
+
 
 @dataclass
 class PostResult:
@@ -114,12 +118,16 @@ async def fill_form(page, field_map: dict, select_map: dict, fields: dict[str, A
     Each field_map entry is either:
       "master_field": "<css selector>"                      -> type text
       "master_field": {"selector": "...", "type": "select"} -> dropdown
-      types: fill (default) | select | check | click
+      types: fill (default) | select | check | click | richtext
+
+    `richtext` fills a rich-text editor (TinyMCE/CKEditor) whose content lives in
+    a contenteditable iframe body, not the hidden backing textarea.
 
     Unknown master fields or empty values are skipped silently so a partial
     field_map still posts what it can.
     """
     filled: list[str] = []
+    failed: list[str] = []
     for master_field, spec in field_map.items():
         value = fields.get(master_field)
         if value in (None, ""):
@@ -132,14 +140,22 @@ async def fill_form(page, field_map: dict, select_map: dict, fields: dict[str, A
         value = translate_value(master_field, str(value), select_map)
         try:
             if kind == "select":
-                await page.select_option(selector, label=value)
+                await page.select_option(selector, label=value, timeout=FILL_TIMEOUT_MS)
             elif kind == "check":
-                await page.check(selector)
+                await page.check(selector, timeout=FILL_TIMEOUT_MS)
             elif kind == "click":
-                await page.click(selector)
+                await page.click(selector, timeout=FILL_TIMEOUT_MS)
+            elif kind == "richtext":
+                if "ifr" in selector or "iframe" in selector.lower():
+                    await page.frame_locator(selector).locator("body").fill(value, timeout=FILL_TIMEOUT_MS)
+                else:  # plain contenteditable element
+                    await page.locator(selector).fill(value, timeout=FILL_TIMEOUT_MS)
             else:
-                await page.fill(selector, value)
+                await page.fill(selector, value, timeout=FILL_TIMEOUT_MS)
             filled.append(master_field)
-        except Exception as exc:  # noqa: BLE001 — surface per-field, keep going
-            raise RuntimeError(f"Failed on field '{master_field}' ({selector}): {exc}") from exc
+        except Exception:  # noqa: BLE001 — collect and keep going; don't abort the whole post
+            failed.append(f"{master_field} ({selector})")
+    if failed:
+        # Visible to the engine via the detail string / logs, but never aborts.
+        print(f"[fill_form] could not fill: {', '.join(failed)}")
     return filled

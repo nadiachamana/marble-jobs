@@ -57,6 +57,15 @@ def _fill(page, board, fields: dict) -> tuple[list[str], list[str]]:
             continue
         value = translate_value(master_field, str(value), select_map)
         try:
+            if kind == "richtext":
+                # Rich-text editor (TinyMCE/CKEditor): fill the contenteditable
+                # iframe body, not the hidden backing textarea.
+                if "ifr" in selector or "iframe" in selector.lower():
+                    page.frame_locator(selector).locator("body").fill(value, timeout=FILL_TIMEOUT_MS)
+                else:
+                    page.locator(selector).first.fill(value, timeout=FILL_TIMEOUT_MS)
+                filled.append(master_field)
+                continue
             loc = page.locator(selector).first
             loc.scroll_into_view_if_needed(timeout=FILL_TIMEOUT_MS)
             if kind == "select":

@@ -46,13 +46,15 @@ FIELD_MAPS: dict[str, dict] = {
         },
         "contact_first_name": "[name='first_name']",
         "contact_last_name": "[name='last_name']",
-        "contact_email": "input[type=email]",
         "company_name": "[name='employer_name']",
         "title": "[name='name']",
         "city": "[name='city']",
         "salary_min": "[name='salary_min']",
         "salary_max": "[name='salary_max']",
-        "description_plain": "#mce_0",
+        # Two TinyMCE rich-text editors: mce_0 = Job Description, mce_1 = "to_apply"
+        # (Application Instructions) — the Ashby apply URL goes in the latter.
+        "description_plain": {"selector": "#mce_0_ifr", "type": "richtext"},
+        "apply_url": {"selector": "#mce_1_ifr", "type": "richtext"},
         # submit: 3 unlabeled buttons on the form — needs confirmation before go-live.
     },
     "KTH": {

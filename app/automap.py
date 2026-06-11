@@ -171,6 +171,10 @@ def propose_field_map(fields: list[dict]) -> tuple[dict, dict]:
             opts = [o for o in (f.get("options") or []) if o]
             if opts:
                 select_map[master] = {"_options_on_board": opts}  # operator maps standard→board values
+        elif f["tag"] == "textarea" and re.fullmatch(r"mce_\d+", f.get("id") or ""):
+            # TinyMCE backing textarea (id "mce_N") — fill its contenteditable
+            # iframe (#mce_N_ifr) as rich text, not the hidden textarea.
+            field_map[master] = {"selector": f"#{f['id']}_ifr", "type": "richtext"}
         else:
             field_map[master] = selector
 
