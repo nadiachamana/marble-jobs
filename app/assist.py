@@ -33,8 +33,17 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _fill(page, board, fields: dict) -> list[str]:
-    filled = []
+# Short per-field timeout: in assisted mode a human finishes anything we miss,
+# so we skip a stubborn/wrong selector in a few seconds instead of stalling 30s.
+FILL_TIMEOUT_MS = 4000
+
+
+def _fill(page, board, fields: dict) -> tuple[list[str], list[str]]:
+    """Best-effort auto-fill. Returns (filled, skipped) master-field names.
+
+    Never raises — a field that can't be filled is left for the human."""
+    filled: list[str] = []
+    skipped: list[str] = []
     select_map = board.select_map or {}
     for master_field, spec in (board.field_map or {}).items():
         if master_field in _CONTROL_KEYS:
@@ -48,16 +57,18 @@ def _fill(page, board, fields: dict) -> list[str]:
             continue
         value = translate_value(master_field, str(value), select_map)
         try:
+            loc = page.locator(selector).first
+            loc.scroll_into_view_if_needed(timeout=FILL_TIMEOUT_MS)
             if kind == "select":
-                page.select_option(selector, label=value)
+                loc.select_option(label=value, timeout=FILL_TIMEOUT_MS)
             elif kind == "check":
-                page.check(selector)
+                loc.check(timeout=FILL_TIMEOUT_MS)
             else:
-                page.fill(selector, value)
+                loc.fill(value, timeout=FILL_TIMEOUT_MS)
             filled.append(master_field)
-        except Exception as exc:  # noqa: BLE001
-            print(f"   ⚠ couldn't fill {master_field} ({selector}): {str(exc)[:60]}")
-    return filled
+        except Exception:  # noqa: BLE001 — leave it for the human
+            skipped.append(f"{master_field} ({selector})")
+    return filled, skipped
 
 
 def assist(job_id: str, board_name: str) -> None:
@@ -115,12 +126,24 @@ def assist(job_id: str, board_name: str) -> None:
                 except Exception as exc:  # noqa: BLE001
                     print(f"   ⚠ auto-login failed ({str(exc)[:60]}). Log in manually in the window.")
 
-            filled = _fill(page, board, fields)
-            print(f"   ✓ auto-filled {len(filled)} fields: {', '.join(filled) or '(none)'}")
+            filled, skipped = _fill(page, board, fields)
+            print(f"   ✓ auto-filled {len(filled)} field(s): {', '.join(filled) or '(none)'}")
+            if skipped:
+                print(f"   ⊘ couldn't auto-fill {len(skipped)} — fill these by hand in the window:")
+                for s in skipped:
+                    print(f"       · {s}")
+            print("\n   Job data for copy/paste (board may ask for fields we don't auto-fill):")
+            print(f"       Company:      Marble")
+            print(f"       Role:         {job.title}")
+            print(f"       Location:     {fields.get('city') or ''} {fields.get('country') or ''}".rstrip())
+            print(f"       Work mode:    {job.work_mode or '—'}")
+            print(f"       Employment:   {job.employment_type or 'Full-time'}")
+            print(f"       Apply URL:    {resolved}")
+            print(f"       Contact:      {fields.get('contact_name')} <{fields.get('contact_email')}>")
             print("\n   ─────────────────────────────────────────────")
             print("   Now in the browser window:")
-            print("     1. Log in if needed, 2. solve any CAPTCHA,")
-            print("     3. fix anything, 4. click the board's Submit button.")
+            print("     1. Log in if needed   2. solve any CAPTCHA")
+            print("     3. fill the skipped/extra fields   4. click the board's Submit button")
             print("   ─────────────────────────────────────────────")
             input("\n   Press Enter here once you've submitted (or to stop)… ")
 
@@ -152,14 +175,18 @@ def _list(job_id: str) -> None:
         if not b.field_map:
             flags.append("no-map")
         print(f"  {b.name:28} {b.distribution_type.value:18} {' '.join(flags)}")
+    print(f'\nRun assisted posting with:\n  python -m app.assist {job_id} "<Board Name>"\n')
 
 
 if __name__ == "__main__":
     args = sys.argv[1:]
     if len(args) >= 2 and args[0] == "--list":
         _list(args[1])
+    elif len(args) == 1 and args[0] != "--list":
+        # A bare job_id → show that job's boards + the exact command to use.
+        _list(args[0])
     elif len(args) >= 2:
         assist(args[0], " ".join(args[1:]))
     else:
         print('Usage: python -m app.assist <job_id> "<board name>"')
-        print('       python -m app.assist --list <job_id>')
+        print('       python -m app.assist <job_id>          # list this job\'s boards')

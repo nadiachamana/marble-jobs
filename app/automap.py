@@ -61,6 +61,12 @@ _MASTER_RULES: dict[str, list[str]] = {
     "salary": ["salary", "compensation", "rémunération", "remuneration"],
     "deadline": ["application deadline", "closing date", "deadline", "expiry", "expiration", "date limite"],
     "industry_tags": ["primary category", "industry", "sector", "category", "secteur", "tags", "field"],
+    # Common board-specific fields with sensible constant defaults
+    # (see build_master_fields): start_date→"ASAP", compensated→"Yes",
+    # listing_type→"Free".
+    "start_date": ["start date", "starting date", "available from", "date de début", "date début", "start"],
+    "compensated": ["is this a paid", "is this compensated", "compensated", "paid position", "paid role"],
+    "listing_type": ["listing type", "job ad type", "ad type"],
 }
 
 # Strong signals from the input type itself.
@@ -69,8 +75,14 @@ _TYPE_HINTS = {"email": "contact_email", "url": "apply_url", "date": "deadline",
 _SUBMIT_WORDS = ["submit", "post job", "post your job", "publish", "create", "save", "envoyer", "poster", "déposer"]
 
 
-def _selector(f: dict) -> str:
-    """Build a stable CSS selector for a field dict."""
+def _selector(f: dict) -> str | None:
+    """Build a *stable, unique* CSS selector for a field, or None if we can't.
+
+    Returning None (and skipping the field) is deliberately preferred over a bare
+    tag like "input": an ambiguous selector silently targets the first matching
+    element, so several fields would collide on the same box. A field we can't
+    address uniquely is left unmapped for the human to fill in assisted mode.
+    """
     fid = f.get("id") or ""
     name = f.get("name") or ""
     if fid and re.fullmatch(r"[A-Za-z_][\w-]*", fid):
@@ -79,14 +91,15 @@ def _selector(f: dict) -> str:
         return f"[id='{fid}']"
     if name:
         return f"[name='{name}']"
-    # Typed inputs without id/name: address by type rather than a bare tag.
+    # Typed inputs that are almost always unique on a job-post form.
     itype = (f.get("type") or "").lower()
-    if f["tag"] == "input" and itype in ("email", "tel", "url", "number", "date", "search"):
+    if f["tag"] == "input" and itype in ("email", "tel", "url"):
         return f"input[type='{itype}']"
     ph = f.get("ph") or ""
-    if ph:
+    if ph and not ph.lower().lstrip().startswith("e.g"):
         return f"{f['tag']}[placeholder=\"{ph[:40]}\"]"
-    return f["tag"]
+    # No id / name / usable placeholder → not uniquely addressable. Skip it.
+    return None
 
 
 def _haystack(field: dict) -> str:
@@ -145,9 +158,13 @@ def propose_field_map(fields: list[dict]) -> tuple[dict, dict]:
         if score < 3 or i in used_fields or master in used_masters:
             continue
         f = inputs[i]
+        selector = _selector(f)
+        if selector is None:
+            # Not uniquely addressable — skip rather than emit a colliding "input".
+            used_fields.add(i)
+            continue
         used_fields.add(i)
         used_masters.add(master)
-        selector = _selector(f)
         if f["tag"] == "select":
             field_map[master] = {"selector": selector, "type": "select"}
             opts = [o for o in (f.get("options") or []) if o]

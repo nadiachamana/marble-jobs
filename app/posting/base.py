@@ -61,11 +61,14 @@ def build_master_fields(job, board, resolved_apply_url: str | None) -> dict[str,
         "description_plain": job.description_plain or "",
         "company_description": MARBLE_BOILERPLATE,
         "company_name": "Marble",
+        "organization": "Marble",  # alias many boards use for the employer name
         "apply_url": resolved_apply_url or job.apply_url or "",
-        "work_mode": job.work_mode or "",
+        "work_mode": job.work_mode or "Hybrid",
         "country": job.location_country or "",
         "city": job.location_city or "",
-        "employment_type": job.employment_type or "",
+        # Boards almost always require employment type / contract type — default
+        # to Full-time (Marble co-founder/residency roles) when Ashby is silent.
+        "employment_type": job.employment_type or "Full-time",
         "deadline": job.deadline.date().isoformat() if job.deadline else "",
         "contact_email": settings.marble_contact_email,
         "contact_name": settings.marble_contact_name,
@@ -73,11 +76,17 @@ def build_master_fields(job, board, resolved_apply_url: str | None) -> dict[str,
         "contact_last_name": (settings.marble_contact_name.split(" ", 1) + [""])[1],
         "seniority": job.seniority or "",
         "function_category": job.function_category or "",
+        "category": job.function_category or "",  # alias boards use for job category
         "industry_tags": ", ".join(tags),
+        "sector": ", ".join(tags) or (job.function_category or ""),
         "salary": salary or "",
         "salary_min": str(job.salary_min) if job.salary_min else "",
         "salary_max": str(job.salary_max) if job.salary_max else "",
         "salary_currency": job.salary_currency or "",
+        # Sensible constant defaults for common board questions.
+        "compensated": "Yes",
+        "start_date": "As soon as possible",
+        "listing_type": "Free",
     }
 
 
