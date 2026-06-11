@@ -40,6 +40,7 @@ _MASTER_RULES: dict[str, list[str]] = {
     "contact_name": ["your name", "full name", "contact name", "contact person", "nom du contact",
                      "partner name", "partner_name"],
     "contact_email": ["work email", "contact email", "your email", "email address", "e-mail", "courriel", "email"],
+    "contact_phone": ["phone number", "telephone", "téléphone", "mobile", "contact number", "phone", "tel"],
     "company_name": ["company name", "employer name", "trade name", "organisation", "organization",
                      "employer", "société", "entreprise", "company", "co_name", "co name"],
     "title": ["job title", "title of role", "role title", "job role", "position", "headline", "titre", "role", "title"],
@@ -70,7 +71,7 @@ _MASTER_RULES: dict[str, list[str]] = {
 }
 
 # Strong signals from the input type itself.
-_TYPE_HINTS = {"email": "contact_email", "url": "apply_url", "date": "deadline", "tel": None}
+_TYPE_HINTS = {"email": "contact_email", "url": "apply_url", "date": "deadline", "tel": "contact_phone"}
 
 _SUBMIT_WORDS = ["submit", "post job", "post your job", "publish", "create", "save", "envoyer", "poster", "déposer"]
 

@@ -74,6 +74,8 @@ def build_master_fields(job, board, resolved_apply_url: str | None) -> dict[str,
         "contact_name": settings.marble_contact_name,
         "contact_first_name": settings.marble_contact_name.split(" ", 1)[0],
         "contact_last_name": (settings.marble_contact_name.split(" ", 1) + [""])[1],
+        "contact_phone": settings.marble_contact_phone,
+        "phone": settings.marble_contact_phone,
         "seniority": job.seniority or "",
         "function_category": job.function_category or "",
         "category": job.function_category or "",  # alias boards use for job category

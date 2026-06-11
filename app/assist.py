@@ -71,13 +71,36 @@ def _fill(page, board, fields: dict) -> tuple[list[str], list[str]]:
     return filled, skipped
 
 
+def _db_location() -> str:
+    if settings.is_sqlite:
+        return "LOCAL SQLite (this computer)"
+    return "the production database"
+
+
+def _job_not_found(session, job_id: str) -> None:
+    print(f"\nJob {job_id} not found in {_db_location()}.\n")
+    jobs = session.query(JobQueue).order_by(JobQueue.created_at.desc()).limit(10).all()
+    if jobs:
+        print("Jobs that ARE in this database:")
+        for j in jobs:
+            print(f"   {j.id}  ·  {j.title}  ({j.status.value})")
+    if settings.is_sqlite:
+        print(
+            "\nReal jobs from Ashby live in the Railway (production) database, not here.\n"
+            "To assist a real job, point this tool at production for one run:\n"
+            '   DATABASE_URL="<your Railway Postgres PUBLIC url>" \\\n'
+            f'   python -m app.assist {job_id} "<Board Name>"\n'
+            "(Copy the URL from Railway → Postgres → Variables → DATABASE_PUBLIC_URL.)"
+        )
+
+
 def assist(job_id: str, board_name: str) -> None:
     from playwright.sync_api import sync_playwright
 
     session = SessionLocal()
     job = session.get(JobQueue, job_id)
     if job is None:
-        print(f"Job {job_id} not found.")
+        _job_not_found(session, job_id)
         return
     board = session.query(BoardConfig).filter_by(name=board_name).one_or_none()
     if board is None:
@@ -140,6 +163,7 @@ def assist(job_id: str, board_name: str) -> None:
             print(f"       Employment:   {job.employment_type or 'Full-time'}")
             print(f"       Apply URL:    {resolved}")
             print(f"       Contact:      {fields.get('contact_name')} <{fields.get('contact_email')}>")
+            print(f"       Phone:        {fields.get('contact_phone')}")
             print("\n   ─────────────────────────────────────────────")
             print("   Now in the browser window:")
             print("     1. Log in if needed   2. solve any CAPTCHA")
@@ -163,7 +187,7 @@ def _list(job_id: str) -> None:
     session = SessionLocal()
     job = session.get(JobQueue, job_id)
     if not job:
-        print("Job not found.")
+        _job_not_found(session, job_id)
         return
     print(f"\nBoards for: {job.title}\n")
     for b in session.query(BoardConfig).order_by(BoardConfig.name).all():

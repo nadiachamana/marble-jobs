@@ -77,6 +77,7 @@ class Settings(BaseSettings):
     # Marble constants
     marble_contact_email: str = "hiring@marble.studio"
     marble_contact_name: str = "Nadia Chamana"
+    marble_contact_phone: str = "+33749945048"
 
     @property
     def normalized_database_url(self) -> str:
