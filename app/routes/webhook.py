@@ -97,6 +97,15 @@ async def _enrich_async(job_id: str, posting_id: str) -> None:
                 continue
             setattr(job, field, value)
         db.commit()
+
+        # v2: compute and store the full canonical payload (Claude + AUTO + STATIC)
+        # so the dispatcher can render any board's canonical field_map.
+        try:
+            db.refresh(job)
+            job.canonical = inference.infer_canonical(job)
+            db.commit()
+        except Exception as exc:  # noqa: BLE001 — never block on canonical
+            print(f"[webhook] canonical inference skipped: {exc}")
         db.refresh(job)
         # Post the parent Slack message and remember its ts so dispatch updates
         # thread under it instead of spamming the channel.

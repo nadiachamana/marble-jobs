@@ -15,6 +15,9 @@ psycopg2-binary==2.9.10
 # HTTP + Ashby API / Slack webhook
 httpx==0.28.1
 
+# Claude (inference + form classification)
+anthropic==0.111.0
+
 # Browser automation for posting engines
 playwright==1.49.1
 

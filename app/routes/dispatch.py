@@ -91,6 +91,25 @@ def dispatch(
     if job is None or not job.selected_board_ids:
         return RedirectResponse(url=f"/jobs/{job_id}?error=no_boards", status_code=303)
 
+    # Pre-flight: block dispatch if any selected (non-paid, non-assist) board is
+    # missing a required value — surface it here, not as a failed submit.
+    from app import validation
+    from app.models import BoardConfig
+
+    blockers = []
+    for b in db.query(BoardConfig).filter(BoardConfig.id.in_(job.selected_board_ids)).all():
+        if b.is_paid or b.requires_assist:
+            continue
+        miss = validation.missing_required(job, b)
+        if miss:
+            blockers.append(f"{b.name}: {', '.join(validation.field_label(k) for k in miss)}")
+    if blockers:
+        from urllib.parse import quote
+        return RedirectResponse(
+            url=f"/jobs/{job_id}?error=required&detail={quote(' · '.join(blockers)[:400])}",
+            status_code=303,
+        )
+
     job.status = JobStatus.queued
     db.commit()
 
@@ -109,6 +128,22 @@ def retry(attempt_id: str, background: BackgroundTasks, db: Session = Depends(ge
     attempt.screenshot_path = None
     db.commit()
     background.add_task(_run_single, attempt.job_id, attempt.board_id)
+    return RedirectResponse(url=f"/jobs/{attempt.job_id}", status_code=303)
+
+
+@router.post("/attempts/{attempt_id}/result_url")
+def set_result_url(
+    attempt_id: str,
+    db: Session = Depends(get_db),
+    result_url: str = Form(default=""),
+):
+    """Manually record the live posting URL for a board (e.g. after assisted/manual
+    posting) so it shows as a link in the tracking view."""
+    attempt = db.get(PostingAttempt, attempt_id)
+    if attempt is None:
+        return RedirectResponse(url="/", status_code=303)
+    attempt.result_url = result_url.strip() or None
+    db.commit()
     return RedirectResponse(url=f"/jobs/{attempt.job_id}", status_code=303)
 
 

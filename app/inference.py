@@ -157,3 +157,202 @@ def infer_all(
         "salary_currency": currency,
         "location_city": infer_city(country, is_remote),
     }
+
+
+# ═══════════════════════ v2: canonical payload (schema-keyed) ═══════════════════════
+# Produces a dict keyed by canonical schema keys (app/schema.py), drawing from
+# three sources per the brief: AUTO (Ashby), STATIC (Marble constants), and
+# INFERRED (Claude, constrained to the canonical controlled vocabularies, with a
+# rule-based fallback when no API key / on error).
+
+from app import llm  # noqa: E402
+from app import schema as S  # noqa: E402
+
+# Canonical fields Claude infers from the JD. Kept to a high-value subset; every
+# CV field is validated against its schema enum after the call.
+_INFERRED_KEYS = [
+    "classification.seniority",
+    "classification.function_category",
+    "classification.role_functions",
+    "classification.industry_tags",
+    "classification.sector",
+    "classification.is_compensated",
+    "location.city",
+    "job.headline",
+    "job.keywords",
+    "job.working_language",
+    "compensation.salary_min",
+    "compensation.salary_max",
+    "compensation.salary_currency",
+    "seo.title",
+    "seo.description",
+    "freetext.students_should_know",
+]
+
+
+def _schema_slice_text() -> str:
+    lines = []
+    for key in _INFERRED_KEYS:
+        f = S.MASTER_SCHEMA[key]
+        allowed = f"  [choose from: {', '.join(f.enum)}]" if f.enum else ""
+        note = f" — {f.notes}" if f.notes else ""
+        lines.append(f"- {key} ({f.type}){allowed}{note}")
+    return "\n".join(lines)
+
+
+_INFER_SYSTEM = (
+    "You classify a job posting into a fixed schema for Marble, a climate-tech "
+    "venture studio. For each field choose the best value; for fields with an "
+    "allowed list you MUST pick from it (use the closest match, or \"Other\" if "
+    "present and nothing fits). Use arrays for list/multi_enum fields. Use null "
+    "when the posting genuinely doesn't say. Keep headline ≤256 chars; seo.title "
+    "≤70; seo.description ≤160.\n\nFields:\n" + _schema_slice_text()
+)
+
+
+def _validate_inferred(raw: dict) -> dict:
+    """Keep only known keys; coerce CV values to canonical enum members.
+
+    Accepts both full dotted keys ('classification.seniority') and the leaf name
+    ('seniority') in case the model shortens them.
+    """
+    # Claude often nests dotted keys as {"classification": {"seniority": ...}};
+    # flatten one level so both nested and flat forms resolve.
+    flat: dict = {}
+    for k, v in raw.items():
+        if isinstance(v, dict) and k not in _INFERRED_KEYS:
+            for subk, subv in v.items():
+                flat[f"{k}.{subk}"] = subv
+        else:
+            flat[k] = v
+
+    leaf_to_key = {k.rsplit(".", 1)[-1]: k for k in _INFERRED_KEYS}
+    resolved: dict = {}
+    for rawk, v in flat.items():
+        key = rawk if rawk in _INFERRED_KEYS else leaf_to_key.get(rawk.rsplit(".", 1)[-1])
+        if key:
+            resolved[key] = v
+
+    out: dict = {}
+    for key in _INFERRED_KEYS:
+        if key not in resolved or resolved[key] in (None, "", []):
+            continue
+        f = S.MASTER_SCHEMA[key]
+        val = resolved[key]
+        if f.enum:
+            allowed = {e.lower(): e for e in f.enum}
+            if f.type in ("multi_enum", "list"):
+                vals = val if isinstance(val, list) else [val]
+                coerced = [allowed[str(v).lower()] for v in vals if str(v).lower() in allowed]
+                if coerced:
+                    out[key] = coerced
+            else:
+                m = allowed.get(str(val).lower())
+                if m:
+                    out[key] = m
+        else:
+            out[key] = val
+    return out
+
+
+# Ashby raw enum → canonical schema value, so per-board select_maps line up.
+_EMPLOYMENT_NORM = {
+    "fulltime": "Full-time", "full-time": "Full-time", "parttime": "Part-time",
+    "part-time": "Part-time", "intern": "Internship", "internship": "Internship",
+    "contract": "Contract", "contractor": "Contract", "temporary": "Temporary",
+}
+_WORKMODE_NORM = {"remote": "Remote", "hybrid": "Hybrid", "onsite": "On-site", "on-site": "On-site"}
+
+
+def _auto_from_job(job) -> dict:
+    g = lambda a: getattr(job, a, None)  # noqa: E731
+    emp = g("employment_type")
+    emp = _EMPLOYMENT_NORM.get((emp or "").lower(), emp) if emp else None
+    wm = g("work_mode")
+    wm = _WORKMODE_NORM.get((wm or "").lower(), wm) if wm else None
+    out = {
+        "job.title": g("title"),
+        "job.description_html": g("description_html"),
+        "job.description_plain": g("description_plain"),
+        "classification.employment_type": emp,
+        "location.work_mode": wm,
+        "location.country": g("location_country"),
+        "apply.url": g("apply_url"),
+        "job.reference": g("ashby_job_id"),
+        "job.number_of_positions": 1,
+    }
+    if g("location_city"):
+        out["location.city"] = g("location_city")
+    if g("deadline"):
+        out["dates.deadline"] = job.deadline.date().isoformat()
+    if g("salary_min"):
+        out["compensation.salary_min"] = g("salary_min")
+        out["compensation.salary_max"] = g("salary_max")
+        out["compensation.salary_currency"] = g("salary_currency") or "EUR"
+    return {k: v for k, v in out.items() if v not in (None, "")}
+
+
+def _static_fields() -> dict:
+    from app.posting.base import MARBLE_BOILERPLATE
+
+    out = {}
+    for key, f in S.MASTER_SCHEMA.items():
+        if f.source == S.Source.STATIC and f.default is not None:
+            out[key] = f.default
+    out["company.description"] = MARBLE_BOILERPLATE
+    return out
+
+
+def _rule_inferred(job) -> dict:
+    """Fallback when Claude is unavailable: reuse the rule-based functions."""
+    title = getattr(job, "title", "") or ""
+    dept = getattr(job, "department", None)
+    country = getattr(job, "location_country", None)
+    is_remote = bool(getattr(job, "work_mode", "") and "remote" in (job.work_mode or "").lower())
+    smin, smax, currency = infer_salary(dept, title)
+    out = {
+        "classification.seniority": infer_seniority(title),
+        "classification.function_category": infer_function_category(title, dept),
+        "classification.industry_tags": infer_industry_tags(title),
+    }
+    city = infer_city(country, is_remote)
+    if city:
+        out["location.city"] = city
+    if smin:
+        out["compensation.salary_min"] = smin
+        out["compensation.salary_max"] = smax
+        out["compensation.salary_currency"] = currency
+    return out
+
+
+def infer_canonical(job) -> dict:
+    """Full canonical payload (schema-keyed) for a job: AUTO + STATIC + INFERRED.
+
+    INFERRED uses Claude when an API key is configured, else rule-based fallback.
+    Returns {canonical_key: value}; the dispatcher walks each board's
+    field_map/select_map over this dict.
+    """
+    canonical = _static_fields()
+    canonical.update(_auto_from_job(job))
+
+    inferred: dict = {}
+    if llm.available():
+        try:
+            user = (
+                f"title: {getattr(job, 'title', '')!r}\n"
+                f"department: {getattr(job, 'department', None)!r}\n"
+                f"country: {getattr(job, 'location_country', None)!r}\n"
+                f"work_mode: {getattr(job, 'work_mode', None)!r}\n"
+                f"description:\n{(getattr(job, 'description_plain', '') or '')[:6000]}"
+            )
+            inferred = _validate_inferred(llm.complete_json(_INFER_SYSTEM, user))
+        except Exception as exc:  # noqa: BLE001 — degrade to rules, never crash
+            print(f"[inference] Claude call failed ({str(exc)[:80]}); using rules")
+            inferred = _rule_inferred(job)
+    else:
+        inferred = _rule_inferred(job)
+
+    # AUTO/STATIC win over INFERRED only where they actually have a value.
+    for k, v in inferred.items():
+        canonical.setdefault(k, v)
+    return canonical

@@ -97,11 +97,22 @@ fills in the `field_map` for you to review. Curated maps also live in
 A board without a confirmed `submit` selector is *filled but not submitted* — the
 engine never reports success without submitting, so nothing posts blindly.
 
-### Master fields
-`title`, `description_html`, `description_plain`, `company_description`,
-`company_name`, `apply_url` (UTM-resolved per board), `work_mode`, `country`,
-`city`, `employment_type`, `deadline`, `contact_email`, `contact_name`,
-`seniority`, `function_category`, `industry_tags`, `salary[_min/_max/_currency]`.
+### Master fields (v2 — `app/schema.py`)
+The canonical schema is the single source of truth: **~99 namespaced fields**
+(`job.*`, `classification.*`, `location.*`, `apply.*`, `compensation.*`, `dates.*`,
+`company.*`, `contact.*`, `invoice.*`, `media.*`, `board_config.*`, `seo.*`,
+`freetext.*`), each with type, source (auto/inferred/static/manual/board_config),
+controlled-vocabulary flag, default, and aliases. Legacy flat keys (`title`,
+`company_name`…) still resolve via `LEGACY_ALIASES`, so old and new field_maps
+both work. `inference.infer_canonical(job)` fills the payload via **Claude**
+(constrained to the canonical enums) with a rule-based fallback.
+
+The auto-mapper now **discovers every control → classifies against the schema
+with Claude → proposes field_map + select_map + new schema fields → reports
+coverage** (`mapped/controls · value-maps · unresolved-required · submit ✓`).
+Proposed new fields are approved in the board UI and merged into the schema
+(`SchemaExtension`) — growing the schema with no code change. Dispatch is
+**blocked pre-flight** when a selected board is missing a required value.
 
 ### Bot-protected / paid boards
 Boards behind CAPTCHA/Cloudflare (or paid) are flagged and skipped on auto-dispatch.

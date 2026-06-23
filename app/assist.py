@@ -233,6 +233,9 @@ def assist(job_id: str, board_name: str) -> None:
             attempt.error_message = "Posted via assisted mode." if ok else "Assisted attempt not completed."
             if ok:
                 board.last_used_at = _now()
+                link = input("   Paste the live posting URL (optional, shows in the dashboard): ").strip()
+                if link:
+                    attempt.result_url = link
             attempt.finished_at = _now()
             session.commit()
 

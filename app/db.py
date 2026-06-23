@@ -56,8 +56,13 @@ def get_db() -> Iterator[Session]:
 # tables, so we add any missing ones idempotently (dev SQLite; fresh Postgres
 # on Railway gets them from create_all directly).
 _ADDED_COLUMNS = {
-    "job_queue": {"slack_ts": "VARCHAR(32)"},
-    "board_config": {"requires_assist": "BOOLEAN", "assist_reason": "VARCHAR(255)"},
+    "job_queue": {"slack_ts": "VARCHAR(32)", "canonical": "JSON"},
+    "board_config": {
+        "requires_assist": "BOOLEAN", "assist_reason": "VARCHAR(255)",
+        # v2 schema columns
+        "required_fields": "JSON", "board_config": "JSON", "name_format": "VARCHAR(16)",
+        "field_notes": "JSON", "coverage": "JSON", "schema_version": "INTEGER",
+    },
 }
 
 

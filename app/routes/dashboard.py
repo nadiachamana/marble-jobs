@@ -96,20 +96,70 @@ def board_new(request: Request):
     return templates.TemplateResponse(
         request,
         "board_form.html",
-        {"board": None, "DistributionType": DistributionType, "BoardStatus": BoardStatus},
+        {"board": None, "DistributionType": DistributionType, "BoardStatus": BoardStatus, "env_status": []},
     )
 
 
 @router.get("/boards/{board_id}/edit", response_class=HTMLResponse)
 def board_edit(board_id: str, request: Request, db: Session = Depends(get_db)):
+    from app.config import get_settings
+
     board = db.get(BoardConfig, board_id)
     if board is None:
         return HTMLResponse("Board not found", status_code=404)
+    env_status = get_settings().board_env_status(board.credentials_ref) if board.credentials_ref else []
     return templates.TemplateResponse(
         request,
         "board_form.html",
-        {"board": board, "DistributionType": DistributionType, "BoardStatus": BoardStatus},
+        {
+            "board": board, "DistributionType": DistributionType, "BoardStatus": BoardStatus,
+            "env_status": env_status, "coverage": board.coverage or {},
+            "proposals": (board.coverage or {}).get("proposals", []),
+        },
     )
+
+
+@router.post("/boards/{board_id}/proposals/{idx}/{action}")
+def board_proposal(board_id: str, idx: int, action: str, db: Session = Depends(get_db)):
+    """Approve a proposed new schema field (adds it to the master schema for all
+    boards), keep it board-only, or ignore it."""
+    from urllib.parse import quote
+
+    from app import schema as S
+    from app.models import SchemaExtension
+
+    board = db.get(BoardConfig, board_id)
+    if board is None:
+        return HTMLResponse("Board not found", status_code=404)
+    cov = dict(board.coverage or {})
+    proposals = list(cov.get("proposals", []))
+    if not (0 <= idx < len(proposals)):
+        return RedirectResponse(url=f"/boards/{board_id}/edit", status_code=303)
+    p = proposals.pop(idx)
+    msg = "Proposal dismissed."
+    key = p.get("suggested_key")
+
+    if action == "approve" and key:
+        if not db.query(SchemaExtension).filter_by(key=key).one_or_none():
+            db.add(SchemaExtension(
+                key=key, type=p.get("type", "text"), source="inferred",
+                controlled_vocab=bool(p.get("enum")), enum=p.get("enum") or [],
+                aliases=[p.get("label", "")], notes=p.get("reason"),
+                status="approved", proposed_by_board=board.name,
+            ))
+            S.apply_extensions()
+            msg = f"Added '{key}' to the master schema."
+    elif action == "board_only" and key:
+        bc = dict(board.board_config or {})
+        bc[key] = p.get("label", "")
+        board.board_config = bc
+        msg = f"Kept '{key}' as a board-only field."
+
+    cov["proposals"] = proposals
+    cov["new_field_proposals"] = len(proposals)
+    board.coverage = cov
+    db.commit()
+    return RedirectResponse(url=f"/boards/{board_id}/edit?msg={quote(msg)}", status_code=303)
 
 
 @router.post("/boards/save")
@@ -130,6 +180,7 @@ async def board_save(
     select_map: str = Form(default="{}"),
     default_for_tags: str = Form(default=""),
     notes: str = Form(default=""),
+    name_format: str = Form(default=""),
     run_automap: str = Form(default="", alias="automap"),
 ):
     board = db.get(BoardConfig, board_id) if board_id else None
@@ -147,6 +198,7 @@ async def board_save(
     board.utm_source = utm_source or None
     board.ashby_tracker_url = ashby_tracker_url or None
     board.is_paid = bool(is_paid)
+    board.name_format = name_format or None
     board.notes = notes or None
     board.default_for_tags = [t.strip() for t in default_for_tags.split(",") if t.strip()]
 

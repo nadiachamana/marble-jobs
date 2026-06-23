@@ -120,6 +120,22 @@ class BoardConfig(Base):
     # smart-default selection without needing dedicated columns per attribute.
     meta: Mapped[dict] = mapped_column(JSON, default=dict)
 
+    # ── v2 schema columns (master_field_schema.md) ──
+    # Canonical keys this board makes mandatory → pre-flight validation (R: block
+    # dispatch when a required value is missing, instead of failing at submit).
+    required_fields: Mapped[list] = mapped_column(JSON, default=list)
+    # Values for board_config.* fields (listing_type, publish_state, third_party_*,
+    # point_of_contact_email…) — set on the board, never inferred from the job.
+    board_config: Mapped[dict] = mapped_column(JSON, default=dict)
+    # contact.full_name ordering: "first_last" (KTH) | "last_first" (FR boards).
+    name_format: Mapped[str | None] = mapped_column(String(16))
+    # Per-field auto-map notes (e.g. "react-select widget, type-and-pick").
+    field_notes: Mapped[dict] = mapped_column(JSON, default=dict)
+    # Last auto-map report: counts + unresolved required + new-field proposals.
+    coverage: Mapped[dict] = mapped_column(JSON, default=dict)
+    # Schema revision this board was mapped against (re-map prompt when stale).
+    schema_version: Mapped[int] = mapped_column(Integer, default=0)
+
     # Raw human-readable form map from the source CSV, kept so an operator can
     # build field_map selectors later via the onboarding UI.
     raw_map: Mapped[str | None] = mapped_column(Text)
@@ -171,6 +187,10 @@ class JobQueue(Base):
     # this job is posted as a reply in the same thread instead of the channel.
     slack_ts: Mapped[str | None] = mapped_column(String(32))
 
+    # v2: full canonical payload (schema-keyed) from inference.infer_canonical,
+    # computed once at enrich time; the dispatcher renders each board from it.
+    canonical: Mapped[dict] = mapped_column(JSON, default=dict)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     dispatched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -181,6 +201,28 @@ class JobQueue(Base):
 
 
 # ─────────────────────────── posting_attempt ───────────────────────────
+
+
+class SchemaExtension(Base):
+    """A new canonical field proposed by the auto-mapper and approved by an
+    operator. schema.apply_extensions() merges approved rows into MASTER_SCHEMA
+    at startup — growing the schema without a code change (board-is-a-row applied
+    to the schema itself).
+    """
+
+    __tablename__ = "schema_extension"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    key: Mapped[str] = mapped_column(String(128), unique=True)  # e.g. "job.credits"
+    type: Mapped[str] = mapped_column(String(32), default="text")
+    source: Mapped[str] = mapped_column(String(32), default="inferred")
+    controlled_vocab: Mapped[bool] = mapped_column(Boolean, default=False)
+    enum: Mapped[list] = mapped_column(JSON, default=list)
+    aliases: Mapped[list] = mapped_column(JSON, default=list)
+    notes: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(16), default="approved")  # approved|ignored
+    proposed_by_board: Mapped[str | None] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
 class PostingAttempt(Base):

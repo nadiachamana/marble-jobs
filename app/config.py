@@ -78,6 +78,10 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from: str = "hiring@marble.studio"
 
+    # Claude (inference + form classification)
+    anthropic_api_key: str = ""
+    claude_model: str = "claude-opus-4-8"
+
     # Marble constants
     marble_contact_email: str = "hiring@marble.studio"
     marble_contact_name: str = "Nadia Chamana"
@@ -98,16 +102,32 @@ class Settings(BaseSettings):
     def is_sqlite(self) -> bool:
         return self.database_url.startswith("sqlite")
 
+    def board_env_prefix(self, credentials_ref: str) -> str:
+        return "BOARD_" + credentials_ref.upper().replace("-", "_").replace(" ", "_")
+
     def board_credentials(self, credentials_ref: str) -> tuple[str | None, str | None]:
         """Resolve a board's login from env vars by its credentials_ref.
 
         credentials_ref "ku-leuven" -> BOARD_KU_LEUVEN_USERNAME / _PASSWORD.
         Passwords are NEVER stored in the DB; they only live in env / Railway secrets.
         """
-        key = credentials_ref.upper().replace("-", "_").replace(" ", "_")
-        username = os.environ.get(f"BOARD_{key}_USERNAME")
-        password = os.environ.get(f"BOARD_{key}_PASSWORD")
-        return username, password
+        prefix = self.board_env_prefix(credentials_ref)
+        return os.environ.get(f"{prefix}_USERNAME"), os.environ.get(f"{prefix}_PASSWORD")
+
+    def board_extra_secret(self, credentials_ref: str, name: str) -> str | None:
+        """Any additional per-board secret, e.g. BOARD_<REF>_APIKEY. Set in Railway."""
+        return os.environ.get(f"{self.board_env_prefix(credentials_ref)}_{name.upper()}")
+
+    def board_env_status(self, credentials_ref: str) -> list[tuple[str, bool]]:
+        """Expected env var names for a board + whether each is currently set.
+
+        Surfaced in the board form so the operator knows exactly which secrets to
+        create in Railway. The form never holds the secret itself."""
+        prefix = self.board_env_prefix(credentials_ref)
+        return [
+            (f"{prefix}_USERNAME", bool(os.environ.get(f"{prefix}_USERNAME"))),
+            (f"{prefix}_PASSWORD", bool(os.environ.get(f"{prefix}_PASSWORD"))),
+        ]
 
 
 @lru_cache

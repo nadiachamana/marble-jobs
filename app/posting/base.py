@@ -46,9 +46,14 @@ def build_master_fields(job, board, resolved_apply_url: str | None) -> dict[str,
     falls back to the job's base apply URL.
     """
     from app.config import get_settings
+    from app.inference import _EMPLOYMENT_NORM, _WORKMODE_NORM
 
     settings = get_settings()
     tags = job.industry_tags or []
+    emp = job.employment_type or "Full-time"
+    emp = _EMPLOYMENT_NORM.get(emp.lower(), emp)
+    work_mode = job.work_mode or "Hybrid"
+    work_mode = _WORKMODE_NORM.get(work_mode.lower(), work_mode)
 
     salary = None
     if job.salary_min:
@@ -59,7 +64,7 @@ def build_master_fields(job, board, resolved_apply_url: str | None) -> dict[str,
             else f"{currency} {job.salary_min}–{job.salary_max}"
         ).strip()
 
-    return {
+    fields = {
         "title": job.title,
         "description_html": job.description_html or "",
         "description_plain": job.description_plain or "",
@@ -67,12 +72,12 @@ def build_master_fields(job, board, resolved_apply_url: str | None) -> dict[str,
         "company_name": "Marble",
         "organization": "Marble",  # alias many boards use for the employer name
         "apply_url": resolved_apply_url or job.apply_url or "",
-        "work_mode": job.work_mode or "Hybrid",
+        "work_mode": work_mode,
         "country": job.location_country or "",
         "city": job.location_city or "",
         # Boards almost always require employment type / contract type — default
         # to Full-time (Marble co-founder/residency roles) when Ashby is silent.
-        "employment_type": job.employment_type or "Full-time",
+        "employment_type": emp,
         "deadline": job.deadline.date().isoformat() if job.deadline else "",
         "contact_email": settings.marble_contact_email,
         "contact_name": settings.marble_contact_name,
@@ -94,6 +99,24 @@ def build_master_fields(job, board, resolved_apply_url: str | None) -> dict[str,
         "start_date": "As soon as possible",
         "listing_type": "Free",
     }
+
+    # contact.full_name ordering varies per board (KTH "Nadia Chamana" vs FR
+    # "Chamana Nadia") — honour the board's name_format flag.
+    if getattr(board, "name_format", None) == "last_first":
+        fields["contact_name"] = f"{fields['contact_last_name']} {fields['contact_first_name']}".strip()
+
+    # ── v2: expose every value under canonical dotted keys too ──
+    # 1) the job's stored canonical payload (rich inferred fields like headline,
+    #    seo, role_functions) for any key not already provided;
+    # 2) flat→canonical aliases so a field_map keyed by canonical OR legacy works.
+    from app.schema import LEGACY_ALIASES
+
+    for flat, canon in LEGACY_ALIASES.items():
+        if flat in fields and canon not in fields:
+            fields[canon] = fields[flat]
+    for k, v in (getattr(job, "canonical", None) or {}).items():
+        fields.setdefault(k, "" if v is None else (", ".join(map(str, v)) if isinstance(v, list) else str(v)))
+    return fields
 
 
 def translate_value(master_field: str, value: str, select_map: dict) -> str:
@@ -150,6 +173,12 @@ async def fill_form(page, field_map: dict, select_map: dict, fields: dict[str, A
                     await page.frame_locator(selector).locator("body").fill(value, timeout=FILL_TIMEOUT_MS)
                 else:  # plain contenteditable element
                     await page.locator(selector).fill(value, timeout=FILL_TIMEOUT_MS)
+            elif kind == "react_select":
+                # react-select combobox: focus, type to filter, pick the match.
+                await page.click(selector, timeout=FILL_TIMEOUT_MS)
+                await page.fill(selector, value, timeout=FILL_TIMEOUT_MS)
+                await page.wait_for_timeout(500)
+                await page.keyboard.press("Enter")
             else:
                 await page.fill(selector, value, timeout=FILL_TIMEOUT_MS)
             filled.append(master_field)

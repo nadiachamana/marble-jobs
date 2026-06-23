@@ -25,6 +25,11 @@ def _startup() -> None:
     for d in ("data", "data/screenshots", "data/attachments", "static"):
         Path(d).mkdir(parents=True, exist_ok=True)
 
+    # Merge operator-approved schema extensions into the canonical registry.
+    from app import schema as _schema
+
+    _schema.apply_extensions()
+
     # First boot on a fresh database (e.g. Railway Postgres): seed the boards so
     # the app comes up fully configured without a manual seed step. Idempotent —
     # only runs when board_config is empty.

@@ -202,16 +202,30 @@ def propose_field_map(fields: list[dict]) -> tuple[dict, dict]:
 # ───────────────────────── browser inspection ─────────────────────────
 
 _EVAL = """els => els.map(e => {
+    const tag = e.tagName.toLowerCase();
+    const type = (e.getAttribute('type')||'').toLowerCase();
+    const role = (e.getAttribute('role')||'').toLowerCase();
     let label = '';
     if (e.id) { const l = document.querySelector(`label[for='${e.id}']`); if (l) label = l.textContent.trim(); }
     if (!label && e.closest('label')) label = e.closest('label').textContent.trim();
     if (!label) label = e.getAttribute('aria-label') || e.getAttribute('placeholder') || '';
-    if (!label && e.tagName.toLowerCase()==='button') label = e.textContent.trim();
-    const opts = e.tagName.toLowerCase()==='select'
+    if (!label && tag==='button') label = e.textContent.trim();
+    // Widget classification — drives the fill strategy.
+    let widget = 'text';
+    if (tag==='select') widget='native_select';
+    else if (tag==='textarea') widget='textarea';
+    else if (type==='radio') widget='radio';
+    else if (type==='checkbox') widget='checkbox';
+    else if (type==='file') widget='file';
+    else if (role==='combobox' || (e.id||'').includes('react-select')) widget='react_select';
+    else if (e.getAttribute('contenteditable')==='true' || (e.id||'').match(/^mce_\\d+$/)) widget='rich_text';
+    else if (tag==='button' || type==='submit') widget='button';
+    const opts = tag==='select'
         ? Array.from(e.options).map(o => o.textContent.trim()).filter(Boolean) : [];
-    return { tag: e.tagName.toLowerCase(), type: e.getAttribute('type')||'', id: e.id||'',
-             name: e.getAttribute('name')||'', ph: e.getAttribute('placeholder')||'',
-             text: (e.textContent||'').trim().slice(0,30), label: label.slice(0,80), options: opts };
+    const required = !!(e.required || e.getAttribute('aria-required')==='true' || /\\*/.test(label));
+    return { tag, type, role, id: e.id||'', name: e.getAttribute('name')||'', ph: e.getAttribute('placeholder')||'',
+             text: (e.textContent||'').trim().slice(0,40), label: label.slice(0,90),
+             widget, options: opts, required };
 })"""
 
 
@@ -260,34 +274,213 @@ async def inspect_form(post_url: str, login: dict | None, creds: tuple) -> dict:
                 out["bot_challenge"] = True
 
             out["final_url"] = page.url
-            out["fields"] = await page.eval_on_selector_all("input, textarea, select, button", _EVAL)
+            out["fields"] = await page.eval_on_selector_all(
+                "input, textarea, select, button, [role=combobox], [contenteditable=true]", _EVAL)
         finally:
             await browser.close()
     return out
 
 
+# ───────────────────────── Claude classification (discover→classify→propose→report) ─────────────────────────
+
+# widget → field_map fill type understood by the posting engines.
+_WIDGET_TYPE = {
+    "native_select": "select",
+    "rich_text": "richtext",
+    "react_select": "react_select",
+    "checkbox": "check",
+    "radio": "radio",
+}
+
+
+def _find_submit(fields: list[dict]) -> str | None:
+    """Best submit-button selector, or None (operator confirms before go-live)."""
+    for f in fields:
+        if f.get("tag") not in ("button", "input"):
+            continue
+        text = (f.get("text") or f.get("label") or "").lower()
+        if f.get("type") == "submit" or any(w in text for w in _SUBMIT_WORDS):
+            if f.get("id") and re.fullmatch(r"[A-Za-z_][\w-]*", f["id"]):
+                return f"#{f['id']}"
+            if f.get("text"):
+                return f"{f.get('tag', 'button')}:has-text(\"{f['text'][:30]}\")"
+            return _selector(f)
+    return None
+
+
+def _schema_dump() -> str:
+    """Compact schema description for the classifier: key, type, aliases, enum."""
+    import app.schema as S
+
+    lines = []
+    for key, f in S.MASTER_SCHEMA.items():
+        if f.source == S.Source.BOARD_CONFIG:
+            continue  # board-row props aren't mapped from the form's job fields
+        bits = [f"{key} ({f.type})"]
+        if f.aliases:
+            bits.append("aka " + ", ".join(f.aliases[:5]))
+        if f.enum:
+            bits.append("values: " + ", ".join(f.enum))
+        lines.append("- " + " | ".join(bits))
+    return "\n".join(lines)
+
+
+_CLASSIFY_SYSTEM = (
+    "You map a job-board form's controls to Marble's canonical field schema. "
+    "Return ONLY JSON of shape:\n"
+    '{ "mappings": [ {"selector": "<as given>", "schema_key": "<canonical key or UNMAPPED>", '
+    '"confidence": 0-1, "value_map": {"<board option label>": "<canonical value>"} } ],\n'
+    '  "new_field_proposals": [ {"selector": "...", "label": "...", "suggested_key": "namespace.x", '
+    '"type": "text|enum|...", "required": true, "reason": "..."} ] }\n'
+    "Rules: map each control to the single best canonical key, or UNMAPPED if none fits. "
+    "For enum/select/radio controls, build value_map from the control's options to the canonical "
+    "values listed for that key (skip options with no canonical match). Every REQUIRED control must "
+    "either map to a key or appear in new_field_proposals. Propose a new field only for a genuinely "
+    "new concept not in the schema.\n\nCanonical schema:\n"
+)
+
+
+def _classify_prompt() -> str:
+    return _CLASSIFY_SYSTEM + _schema_dump()
+
+
+def classify_with_claude(controls: list[dict]) -> dict:
+    """Ask Claude to map discovered controls → schema. Returns mappings + proposals."""
+    import json
+
+    from app import llm
+
+    payload = [
+        {
+            "selector": c["selector"], "label": c.get("label") or c.get("ph") or "",
+            "name": c.get("name") or "", "widget": c.get("widget"),
+            "required": c.get("required", False), "options": (c.get("options") or [])[:40],
+        }
+        for c in controls
+    ]
+    user = "Controls:\n" + json.dumps(payload, ensure_ascii=False)
+    return llm.complete_json(_classify_prompt(), user, max_tokens=4096)
+
+
+def build_from_classification(controls: list[dict], classification: dict) -> dict:
+    """Turn Claude's classification into field_map / select_map / coverage / proposals."""
+    import app.schema as S
+
+    by_selector = {c["selector"]: c for c in controls}
+    field_map: dict = {}
+    select_map: dict = {}
+    field_notes: dict = {}
+    required_fields: list[str] = []
+    unresolved_required: list[str] = []
+    used_keys: set[str] = set()
+
+    for m in classification.get("mappings", []):
+        key = m.get("schema_key")
+        sel = m.get("selector")
+        conf = m.get("confidence", 0)
+        ctrl = by_selector.get(sel)
+        if not ctrl:
+            continue
+        if not key or key == "UNMAPPED" or key not in S.MASTER_SCHEMA or conf < 0.5 or key in used_keys:
+            if ctrl.get("required"):
+                unresolved_required.append(f"{ctrl.get('label') or sel}")
+            continue
+        used_keys.add(key)
+        ftype = _WIDGET_TYPE.get(ctrl.get("widget"), "fill")
+        if ctrl.get("widget") == "rich_text" and ctrl.get("id", "").startswith("mce_"):
+            field_map[key] = {"selector": f"#{ctrl['id']}_ifr", "type": "richtext"}
+        elif ftype == "fill":
+            field_map[key] = sel
+        else:
+            field_map[key] = {"selector": sel, "type": ftype}
+        # value translation: invert {board_label: canonical_value} → {canonical_value: board_label}
+        vmap = m.get("value_map") or {}
+        if vmap:
+            inv = {}
+            for board_label, canon in vmap.items():
+                if canon:
+                    inv[str(canon)] = board_label
+            if inv:
+                select_map[key] = inv
+        if ctrl.get("required"):
+            required_fields.append(key)
+        if ctrl.get("widget") in ("react_select", "radio"):
+            field_notes[key] = f"{ctrl['widget']} widget — verify fill behavior"
+
+    submit = _find_submit(controls)
+    if submit:
+        field_map["submit"] = {"selector": submit, "type": "click"}
+
+    proposals = classification.get("new_field_proposals", []) or []
+    coverage = {
+        "controls": len([c for c in controls if c.get("widget") not in ("button",)]),
+        "mapped": len([k for k in field_map if k not in _CONTROL_KEYS]),
+        "select_maps": len(select_map),
+        "new_field_proposals": len(proposals),
+        "unresolved_required": len(unresolved_required),
+        "unresolved_required_labels": unresolved_required[:10],
+        "submit_confirmed": "submit" in field_map,
+        "schema_version": S.SCHEMA_VERSION,
+    }
+    return {
+        "field_map": field_map, "select_map": select_map, "coverage": coverage,
+        "proposals": proposals, "field_notes": field_notes, "required_fields": required_fields,
+    }
+
+
 async def automap_board(board: BoardConfig) -> dict:
-    """Full auto-map for a board row. Returns a result summary."""
+    """Full auto-map for a board row: discover → classify → propose → report.
+
+    Uses Claude classification when an API key is configured; otherwise falls back
+    to the heuristic alias matcher.
+    """
+    from app import llm
+
     login = LOGIN_CONFIG.get(board.name)
     if login:
         login = {**login, "url": board.post_url}
     creds = settings.board_credentials(board.credentials_ref or "")
 
     insp = await inspect_form(board.post_url, login, creds)
-    field_map, select_map = propose_field_map(insp["fields"])
-    if login:
-        field_map = {"login": login, **field_map}  # auth engine needs the login block first
+    controls = [dict(f, selector=_selector(f) or f.get("tag")) for f in insp["fields"]]
 
-    result = {
+    coverage: dict = {}
+    proposals: list = []
+    field_notes: dict = {}
+    required_fields: list = []
+
+    used_claude = False
+    if llm.available() and not insp["bot_challenge"]:
+        try:
+            classification = classify_with_claude([c for c in controls if c.get("widget") != "button"])
+            built = build_from_classification(controls, classification)
+            field_map, select_map = built["field_map"], built["select_map"]
+            coverage, proposals = built["coverage"], built["proposals"]
+            field_notes, required_fields = built["field_notes"], built["required_fields"]
+            used_claude = True
+        except Exception as exc:  # noqa: BLE001 — fall back to heuristic
+            print(f"[automap] Claude classify failed ({str(exc)[:80]}); using heuristic")
+
+    if not used_claude:
+        field_map, select_map = propose_field_map(insp["fields"])
+
+    if login:
+        field_map = {"login": login, **field_map}
+
+    return {
         "board": board.name,
         "field_map": field_map,
         "select_map": select_map,
+        "coverage": coverage,
+        "proposals": proposals,
+        "field_notes": field_notes,
+        "required_fields": required_fields,
+        "used_claude": used_claude,
         "bot_challenge": insp["bot_challenge"],
         "final_url": insp["final_url"],
         "n_fields": len([f for f in insp["fields"] if f["tag"] in ("input", "textarea", "select")]),
         "assist_reason": "reCAPTCHA / Cloudflare" if insp["bot_challenge"] else None,
     }
-    return result
 
 
 _CONTROL_KEYS = {"login", "submit", "_success_selector", "_result_url_selector"}
@@ -306,6 +499,17 @@ def apply_result(board: BoardConfig, result: dict, session) -> bool:
     board.field_map = result["field_map"]
     if result["select_map"]:
         board.select_map = result["select_map"]
+    # v2 metadata
+    cov = dict(result.get("coverage") or {})
+    if result.get("proposals"):
+        cov["proposals"] = result["proposals"]
+    board.coverage = cov
+    if result.get("field_notes"):
+        board.field_notes = result["field_notes"]
+    if result.get("required_fields"):
+        board.required_fields = result["required_fields"]
+    if cov.get("schema_version"):
+        board.schema_version = cov["schema_version"]
     if result["bot_challenge"]:
         board.requires_assist = True
         board.assist_reason = result["assist_reason"]

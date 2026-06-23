@@ -13,8 +13,59 @@ automatically by opening the live form. You normally never edit JSON by hand.</p
 {% if board %}
 <form method="post" action="/boards/{{ board.id }}/automap" style="margin-bottom:14px">
   <button class="btn" type="submit">⚡ Auto-map from URL</button>
-  <span class="muted">Re-opens the live form, matches fields to the master schema, and regenerates the mapping. ~20–40s.</span>
+  <span class="muted">Re-opens the live form, matches every control to the master schema (Claude), and regenerates the mapping + coverage. ~20–40s.</span>
 </form>
+
+{% if coverage %}
+<div class="panel">
+  <h2 style="margin-top:0">Coverage report</h2>
+  <div class="pill-group">
+    <span class="badge mapped">{{ coverage.get('mapped', 0) }}/{{ coverage.get('controls', 0) }} mapped</span>
+    <span class="badge {{ 'success' if coverage.get('select_maps') else 'skipped' }}">{{ coverage.get('select_maps', 0) }} value maps</span>
+    <span class="badge {{ 'failed' if coverage.get('unresolved_required') else 'success' }}">{{ coverage.get('unresolved_required', 0) }} unresolved required</span>
+    <span class="badge {{ 'success' if coverage.get('submit_confirmed') else 'failed' }}">submit {{ '✓' if coverage.get('submit_confirmed') else 'not confirmed' }}</span>
+    <span class="badge {{ 'reviewed' if coverage.get('schema_version') == 2 else 'incomplete' }}">schema v{{ coverage.get('schema_version', '?') }}</span>
+  </div>
+  {% if coverage.get('unresolved_required_labels') %}
+  <p class="muted" style="margin-top:10px">Unresolved required: {{ coverage.get('unresolved_required_labels') | join(', ') }}</p>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if proposals %}
+<div class="panel">
+  <h2 style="margin-top:0">New field proposals <span class="muted">({{ proposals|length }})</span></h2>
+  <p class="muted">The mapper found form fields with no schema slot. Approve to add to the master schema (all boards), keep board-only, or ignore.</p>
+  {% for p in proposals %}
+  <div class="board-item">
+    <div style="flex:1">
+      <strong>{{ p.get('label') or p.get('suggested_key') }}</strong>
+      <span class="mono muted">→ {{ p.get('suggested_key') }}</span>
+      {% if p.get('required') %}<span class="badge failed">required</span>{% endif %}
+      <div class="meta">{{ p.get('reason') }}</div>
+    </div>
+    <div class="pill-group">
+      <form method="post" action="/boards/{{ board.id }}/proposals/{{ loop.index0 }}/approve" style="margin:0"><button class="btn small" type="submit">Approve</button></form>
+      <form method="post" action="/boards/{{ board.id }}/proposals/{{ loop.index0 }}/board_only" style="margin:0"><button class="btn small secondary" type="submit">Board-only</button></form>
+      <form method="post" action="/boards/{{ board.id }}/proposals/{{ loop.index0 }}/ignore" style="margin:0"><button class="btn small secondary" type="submit">Ignore</button></form>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if env_status %}
+<div class="panel">
+  <h2 style="margin-top:0">Credentials (set in Railway)</h2>
+  <p class="muted">Login secrets live as Railway environment variables, never in this form. This board's <span class="mono">credentials_ref</span> maps to:</p>
+  {% for name, is_set in env_status %}
+  <div><span class="mono">{{ name }}</span>
+    {% if is_set %}<span class="badge success">set ✓</span>{% else %}<span class="badge failed">missing</span>{% endif %}
+  </div>
+  {% endfor %}
+  <p class="muted" style="margin-top:8px">Need more (API key, company ID…)? Add <span class="mono">{{ env_status[0][0].rsplit('_',1)[0] }}_APIKEY</span> etc. in Railway and reference it in the login/field_map.</p>
+</div>
+{% endif %}
 {% endif %}
 
 <form method="post" action="/boards/save">
@@ -55,6 +106,14 @@ automatically by opening the live form. You normally never edit JSON by hand.</p
         <select name="is_paid">
           <option value="">No</option>
           <option value="1" {% if board and board.is_paid %}selected{% endif %}>Yes</option>
+        </select>
+      </div>
+    </div>
+    <div class="row two">
+      <div><label>Contact name order</label>
+        <select name="name_format">
+          <option value="" {% if not board or not board.name_format %}selected{% endif %}>First Last (default)</option>
+          <option value="last_first" {% if board and board.name_format == 'last_first' %}selected{% endif %}>Last First (FR boards)</option>
         </select>
       </div>
     </div>

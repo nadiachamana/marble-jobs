@@ -12,6 +12,9 @@
 {% if request.query_params.get('error') == 'no_boards' %}
 <div class="flash">Select at least one board before dispatching.</div>
 {% endif %}
+{% if request.query_params.get('error') == 'required' %}
+<div class="flash">Cannot dispatch — required fields missing →&nbsp; {{ request.query_params.get('detail') }}</div>
+{% endif %}
 
 <!-- Section 1 — auto-filled, read-only -->
 <details class="panel">
@@ -113,10 +116,14 @@
         <td class="mono">{{ a.resolved_apply_url or '—' }}</td>
         <td>
           {% if a.status.value in ['failed','skipped','pending_retry'] %}
-          <form method="post" action="/attempts/{{ a.id }}/retry" style="margin:0">
+          <form method="post" action="/attempts/{{ a.id }}/retry" style="margin:0 0 6px">
             <button class="btn small secondary" type="submit">Retry</button>
           </form>
           {% endif %}
+          <form method="post" action="/attempts/{{ a.id }}/result_url" style="margin:0; display:flex; gap:4px">
+            <input type="url" name="result_url" value="{{ a.result_url or '' }}" placeholder="live posting URL" style="font-size:11px; padding:3px 6px">
+            <button class="btn small secondary" type="submit">Save link</button>
+          </form>
         </td>
       </tr>
       {% endfor %}
