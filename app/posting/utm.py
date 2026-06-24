@@ -69,7 +69,7 @@ async def resolve_apply_url(job, board) -> str:
         from playwright.async_api import async_playwright
 
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            browser = await p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
             page = await browser.new_page()
             try:
                 await page.goto(tracker, wait_until="networkidle", timeout=30000)

@@ -30,7 +30,7 @@ async def post(job, board, fields: dict, attempt_id: str) -> PostResult:
     from playwright.async_api import async_playwright
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        browser = await p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
         page = await browser.new_page()
         try:
             await page.goto(board.post_url, wait_until="domcontentloaded", timeout=30000)

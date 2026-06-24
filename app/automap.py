@@ -235,7 +235,7 @@ async def inspect_form(post_url: str, login: dict | None, creds: tuple) -> dict:
 
     out: dict = {"fields": [], "bot_challenge": False, "needs_login": False, "final_url": ""}
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        browser = await p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
         page = await (await browser.new_context()).new_page()
         try:
             await page.goto(post_url, wait_until="domcontentloaded", timeout=45000)

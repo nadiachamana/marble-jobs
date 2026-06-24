@@ -240,7 +240,15 @@ async def board_save(
     # One-click "Create & auto-map": save, then inspect the live form and fill
     # the field_map automatically so the operator never writes JSON.
     if run_automap and board.post_url:
-        result = await automap.automap_board(board)
+        try:
+            result = await automap.automap_board(board)
+        except Exception as exc:  # noqa: BLE001 — surface the reason, never 500
+            import traceback
+            traceback.print_exc()
+            return RedirectResponse(
+                f"/boards/{board.id}/edit?msg={quote('Saved. Auto-map failed: ' + str(exc)[:200])}",
+                status_code=303,
+            )
         saved = automap.apply_result(board, result, db)
         n = automap.real_field_count(result["field_map"])
         if result["bot_challenge"]:
@@ -272,7 +280,15 @@ async def board_automap(board_id: str, db: Session = Depends(get_db)):
     if not board.post_url:
         return RedirectResponse(f"/boards/{board_id}/edit?msg={quote('Set a post URL first.')}", status_code=303)
 
-    result = await automap.automap_board(board)
+    try:
+        result = await automap.automap_board(board)
+    except Exception as exc:  # noqa: BLE001 — surface the reason, never 500
+        import traceback
+        traceback.print_exc()
+        return RedirectResponse(
+            f"/boards/{board_id}/edit?msg={quote('Auto-map failed: ' + str(exc)[:200])}",
+            status_code=303,
+        )
     saved = automap.apply_result(board, result, db)
     n = automap.real_field_count(result["field_map"])
 
