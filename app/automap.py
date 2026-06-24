@@ -76,6 +76,15 @@ _TYPE_HINTS = {"email": "contact_email", "url": "apply_url", "date": "deadline",
 _SUBMIT_WORDS = ["submit", "post job", "post your job", "publish", "create", "save", "envoyer", "poster", "déposer"]
 
 
+def _attr_sel(attr: str, val: str) -> str | None:
+    """[attr='val'] with a quote style that survives quotes in val; None if both."""
+    if "'" not in val:
+        return f"[{attr}='{val}']"
+    if '"' not in val:
+        return f'[{attr}="{val}"]'
+    return None
+
+
 def _selector(f: dict) -> str | None:
     """Build a *stable, unique* CSS selector for a field, or None if we can't.
 
@@ -88,10 +97,10 @@ def _selector(f: dict) -> str | None:
     name = f.get("name") or ""
     if fid and re.fullmatch(r"[A-Za-z_][\w-]*", fid):
         return f"#{fid}"
-    if fid:
-        return f"[id='{fid}']"
-    if name:
-        return f"[name='{name}']"
+    if fid and (sel := _attr_sel("id", fid)):
+        return sel
+    if name and (sel := _attr_sel("name", name)):
+        return sel
     # Typed inputs that are almost always unique on a job-post form.
     itype = (f.get("type") or "").lower()
     if f["tag"] == "input" and itype in ("email", "tel", "url"):
@@ -206,8 +215,10 @@ _EVAL = """els => els.map(e => {
     const type = (e.getAttribute('type')||'').toLowerCase();
     const role = (e.getAttribute('role')||'').toLowerCase();
     let label = '';
-    if (e.id) { const l = document.querySelector(`label[for='${e.id}']`); if (l) label = l.textContent.trim(); }
-    if (!label && e.closest('label')) label = e.closest('label').textContent.trim();
+    // Escape the id (some forms have ids with quotes/brackets) and never let a
+    // single bad element throw and abort the whole scan.
+    if (e.id) { try { const l = document.querySelector('label[for="' + CSS.escape(e.id) + '"]'); if (l) label = l.textContent.trim(); } catch (_) {} }
+    if (!label && e.closest('label')) { try { label = e.closest('label').textContent.trim(); } catch (_) {} }
     if (!label) label = e.getAttribute('aria-label') || e.getAttribute('placeholder') || '';
     if (!label && tag==='button') label = e.textContent.trim();
     // Widget classification — drives the fill strategy.
