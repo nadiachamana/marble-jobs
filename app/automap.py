@@ -257,7 +257,8 @@ async def inspect_form(post_url: str, login: dict | None, creds: tuple) -> dict:
                 out["bot_challenge"] = True
 
             # Log in if a login config + creds are available and a password box shows.
-            if login and creds[0] and creds[1] and await page.locator(login["password"]).count():
+            if (login and login.get("password") and login.get("username") and login.get("submit")
+                    and creds[0] and creds[1] and await page.locator(login["password"]).count()):
                 out["needs_login"] = True
                 try:
                     await page.fill(login["username"], creds[0])
@@ -436,9 +437,12 @@ async def automap_board(board: BoardConfig) -> dict:
     """
     from app import llm
 
-    login = LOGIN_CONFIG.get(board.name)
+    # Prefer the board's own login config (set in the form), else the built-in
+    # selectors for known boards. Login here is CSS selectors; the actual
+    # username/password come from Railway env vars via credentials_ref.
+    login = (board.field_map or {}).get("login") or LOGIN_CONFIG.get(board.name)
     if login:
-        login = {**login, "url": board.post_url}
+        login = {**login, "url": login.get("url") or board.post_url}
     creds = settings.board_credentials(board.credentials_ref or "")
 
     insp = await inspect_form(board.post_url, login, creds)

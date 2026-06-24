@@ -101,6 +101,18 @@ automatically by opening the live form. You normally never edit JSON by hand.</p
       <div><label>Ashby tracker URL</label><input type="url" name="ashby_tracker_url" value="{{ board.ashby_tracker_url if board else '' }}"></div>
     </div>
     <div class="row two">
+      <div><label>Region</label>
+        {% set cur_region = board.meta.get('region') if board and board.meta else '' %}
+        <select name="region">
+          <option value="">—</option>
+          {% for r in ['Worldwide','Europe','North America','Asia','Latin America','Africa','Australia','Other'] %}
+          <option value="{{ r }}" {% if cur_region == r %}selected{% endif %}>{{ r }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div><label>Field / focus</label><input type="text" name="field" value="{{ board.meta.get('field') if board and board.meta else '' }}" placeholder="e.g. Environmental and Climate, Generalist"></div>
+    </div>
+    <div class="row two">
       <div><label>Default for tags (comma-separated)</label><input type="text" name="default_for_tags" value="{{ board.default_for_tags | join(', ') if board else '' }}"></div>
       <div><label>Paid board?</label>
         <select name="is_paid">
@@ -120,6 +132,25 @@ automatically by opening the live form. You normally never edit JSON by hand.</p
     <label>Notes</label>
     <textarea name="notes" rows="2">{{ board.notes if board else '' }}</textarea>
   </div>
+
+  {% set login = (board.field_map or {}).get('login') if board else None %}
+  <details class="panel" {% if login %}open{% endif %}>
+    <summary>Login (authenticated boards) — CSS selectors</summary>
+    <div style="margin-top:14px">
+      <p class="muted">For <span class="mono">playwright_auth</span> boards. These are the
+        <strong>selectors</strong> of the login form, not the password. The actual username/password
+        live in Railway as <span class="mono">BOARD_&lt;REF&gt;_USERNAME / _PASSWORD</span> (set
+        <em>Credentials ref</em> above). Find selectors via the login page's dev-tools (right-click → Inspect).
+        Once set, <strong>Auto-map</strong> logs in before mapping.</p>
+      <label>Login URL <span class="muted">(optional — defaults to post URL)</span></label>
+      <input type="url" name="login_url" value="{{ login.get('url') if login else '' }}" placeholder="https://board.example/login">
+      <div class="row">
+        <div><label>Username field selector</label><input type="text" name="login_username" class="mono" value="{{ login.get('username') if login else '' }}" placeholder="#email"></div>
+        <div><label>Password field selector</label><input type="text" name="login_password" class="mono" value="{{ login.get('password') if login else '' }}" placeholder="#password"></div>
+        <div><label>Submit button selector</label><input type="text" name="login_submit" class="mono" value="{{ login.get('submit') if login else '' }}" placeholder="button[type=submit]"></div>
+      </div>
+    </div>
+  </details>
 
   <!-- Advanced: the mapping is auto-generated; this is a manual override only. -->
   <details class="panel" {% if board and board.field_map %}open{% endif %}>

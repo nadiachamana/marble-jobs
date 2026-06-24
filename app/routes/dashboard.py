@@ -181,6 +181,12 @@ async def board_save(
     default_for_tags: str = Form(default=""),
     notes: str = Form(default=""),
     name_format: str = Form(default=""),
+    region: str = Form(default=""),
+    field: str = Form(default=""),
+    login_url: str = Form(default=""),
+    login_username: str = Form(default=""),
+    login_password: str = Form(default=""),
+    login_submit: str = Form(default=""),
     run_automap: str = Form(default="", alias="automap"),
 ):
     board = db.get(BoardConfig, board_id) if board_id else None
@@ -202,11 +208,28 @@ async def board_save(
     board.notes = notes or None
     board.default_for_tags = [t.strip() for t in default_for_tags.split(",") if t.strip()]
 
+    # Region / field are board metadata (shown in the library, drives smart defaults).
+    meta = dict(board.meta or {})
+    if region:
+        meta["region"] = region
+    if field:
+        meta["field"] = field
+    board.meta = meta
+
     # JSON editors — keep prior value on parse error rather than wiping config.
     try:
-        board.field_map = json.loads(field_map or "{}")
+        new_field_map = json.loads(field_map or "{}")
     except json.JSONDecodeError:
-        pass
+        new_field_map = dict(board.field_map or {})
+    # Login selectors from the form override/augment the field_map's login block
+    # (the auth engine + auto-mapper read field_map["login"]). Selectors only —
+    # the username/password values live in Railway env vars (credentials_ref).
+    if login_username or login_password or login_submit:
+        new_field_map["login"] = {
+            **({"url": login_url} if login_url else {}),
+            "username": login_username, "password": login_password, "submit": login_submit,
+        }
+    board.field_map = new_field_map
     try:
         board.select_map = json.loads(select_map or "{}")
     except json.JSONDecodeError:
