@@ -109,6 +109,10 @@ class BoardConfig(Base):
     default_for_depts: Mapped[list] = mapped_column(JSON, default=list)
 
     is_paid: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Soft-delete: an archived board is hidden from the library and the review
+    # board selector, but its posting history keeps rendering on old job pages.
+    # Boards with no history are hard-deleted instead (see /boards/{id}/delete).
+    archived: Mapped[bool] = mapped_column(Boolean, default=False)
     # Board needs a human-in-the-loop step (CAPTCHA / Cloudflare / bot-challenge).
     # Auto-dispatch skips these with a pointer to assisted mode; never bypassed.
     requires_assist: Mapped[bool] = mapped_column(Boolean, default=False)

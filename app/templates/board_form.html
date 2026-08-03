@@ -25,6 +25,7 @@ automatically by opening the live form. You normally never edit JSON by hand.</p
     <span class="badge {{ 'failed' if coverage.get('unresolved_required') else 'success' }}">{{ coverage.get('unresolved_required', 0) }} unresolved required</span>
     <span class="badge {{ 'success' if coverage.get('submit_confirmed') else 'failed' }}">submit {{ '✓' if coverage.get('submit_confirmed') else 'not confirmed' }}</span>
     <span class="badge {{ 'reviewed' if coverage.get('schema_version') == 2 else 'incomplete' }}">schema v{{ coverage.get('schema_version', '?') }}</span>
+    {% if coverage.get('pages', 1) > 1 %}<span class="badge mapped">{{ coverage.get('pages') }}-page wizard</span>{% endif %}
   </div>
   {% if coverage.get('unresolved_required_labels') %}
   <p class="muted" style="margin-top:10px">Unresolved required: {{ coverage.get('unresolved_required_labels') | join(', ') }}</p>
@@ -128,6 +129,14 @@ automatically by opening the live form. You normally never edit JSON by hand.</p
           <option value="last_first" {% if board and board.name_format == 'last_first' %}selected{% endif %}>Last First (FR boards)</option>
         </select>
       </div>
+      <div><label>Form layout <span class="muted">(how the posting form is structured)</span></label>
+        {% set cur_layout = board.meta.get('form_layout') if board and board.meta else '' %}
+        <select name="form_layout">
+          <option value="auto" {% if not cur_layout or cur_layout == 'auto' %}selected{% endif %}>Auto-detect</option>
+          <option value="single" {% if cur_layout == 'single' %}selected{% endif %}>Single page</option>
+          <option value="multi" {% if cur_layout == 'multi' %}selected{% endif %}>Multi-page wizard (Next/Back steps)</option>
+        </select>
+      </div>
     </div>
     <label>Notes</label>
     <textarea name="notes" rows="2">{{ board.notes if board else '' }}</textarea>
@@ -175,6 +184,11 @@ automatically by opening the live form. You normally never edit JSON by hand.</p
   <div class="panel" style="display:flex; gap:12px; align-items:center; margin-top:18px">
     {% if board %}
       <button class="btn" type="submit">Save board</button>
+      <button class="btn secondary" type="submit"
+              form="delete-board-form" style="color:#e5484d; border-color:#e5484d; margin-left:auto"
+              onclick="return confirm({{ ('Delete ' + board.name + '?\n\nIt has ' + (attempt_count|string) + ' past posting(s), so it will be ARCHIVED (hidden from dispatch, history kept). You can restore it from the board library.' if attempt_count else 'Delete ' + board.name + '?\n\nIt has never been used for a posting, so it will be permanently removed.') | tojson }})">
+        Delete board
+      </button>
     {% else %}
       <button class="btn" type="submit" name="automap" value="1">⚡ Create &amp; auto-map from URL</button>
       <button class="btn secondary" type="submit">Create without mapping</button>
@@ -182,4 +196,8 @@ automatically by opening the live form. You normally never edit JSON by hand.</p
     {% endif %}
   </div>
 </form>
+
+{% if board %}
+<form id="delete-board-form" method="post" action="/boards/{{ board.id }}/delete"></form>
+{% endif %}
 {% endblock %}

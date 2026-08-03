@@ -4,6 +4,10 @@
 <h1>Board library</h1>
 <p class="sub">{{ boards|length }} configured boards. Adding a board is a row, not a code change.</p>
 
+{% if msg %}
+<div class="flash" style="background:#1f3a2a;color:var(--green)">{{ msg }}</div>
+{% endif %}
+
 <div class="panel">
   <table>
     <thead>
@@ -25,4 +29,26 @@
     </tbody>
   </table>
 </div>
+
+{% if archived_boards %}
+<details class="panel">
+  <summary>Archived boards ({{ archived_boards|length }}) — hidden from job dispatch, history kept</summary>
+  <table style="margin-top:12px">
+    <tbody>
+      {% for b in archived_boards %}
+      <tr>
+        <td><strong>{{ b.name }}</strong>
+            <br><span class="mono muted">{{ (b.post_url or b.url or '')[:48] }}</span></td>
+        <td class="muted">{{ b.distribution_type.value.replace('_', ' ') }}</td>
+        <td>
+          <form method="post" action="/boards/{{ b.id }}/restore" style="margin:0">
+            <button class="btn small secondary" type="submit">Restore</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</details>
+{% endif %}
 {% endblock %}

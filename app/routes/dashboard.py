@@ -30,6 +30,38 @@ router = APIRouter(tags=["dashboard"])
 templates = Jinja2Templates(directory="app/templates")
 
 
+def _normalize_url(u: str | None) -> str:
+    """Canonical form for duplicate-checking: lowercase, no scheme/www,
+    no query/fragment, no trailing slash. '' when unset."""
+    from urllib.parse import urlsplit
+
+    if not u or not u.strip():
+        return ""
+    raw = u.strip()
+    if "://" not in raw:
+        raw = "https://" + raw
+    parts = urlsplit(raw.lower())
+    host = parts.netloc.removeprefix("www.")
+    path = parts.path.rstrip("/")
+    return f"{host}{path}"
+
+
+def _find_duplicate(db: Session, name: str, url: str, post_url: str,
+                    exclude_id: str = "") -> BoardConfig | None:
+    """First non-archived board matching this name (case-insensitive) or any of
+    these URLs (normalized), excluding the board being edited."""
+    norm_name = name.strip().casefold()
+    norm_urls = {_normalize_url(url), _normalize_url(post_url)} - {""}
+    for b in db.query(BoardConfig).filter(BoardConfig.archived.isnot(True)).all():
+        if b.id == exclude_id:
+            continue
+        if b.name.strip().casefold() == norm_name:
+            return b
+        if norm_urls & ({_normalize_url(b.url), _normalize_url(b.post_url)} - {""}):
+            return b
+    return None
+
+
 # ───────────────────────── job queue ─────────────────────────
 
 
@@ -57,7 +89,12 @@ def review(job_id: str, request: Request, db: Session = Depends(get_db)):
     if job is None:
         return HTMLResponse("Job not found", status_code=404)
 
-    boards = db.query(BoardConfig).order_by(BoardConfig.name).all()
+    boards = (
+        db.query(BoardConfig)
+        .filter(BoardConfig.archived.isnot(True))
+        .order_by(BoardConfig.name)
+        .all()
+    )
     defaults = job.selected_board_ids or list(default_checked_ids(job, boards))
 
     grouped: dict[str, list[BoardConfig]] = {
@@ -87,8 +124,14 @@ def review(job_id: str, request: Request, db: Session = Depends(get_db)):
 
 @router.get("/boards", response_class=HTMLResponse)
 def boards(request: Request, db: Session = Depends(get_db)):
-    boards = db.query(BoardConfig).order_by(BoardConfig.name).all()
-    return templates.TemplateResponse(request, "boards.html", {"boards": boards})
+    rows = db.query(BoardConfig).order_by(BoardConfig.name).all()
+    active = [b for b in rows if not b.archived]
+    archived = [b for b in rows if b.archived]
+    return templates.TemplateResponse(
+        request, "boards.html",
+        {"boards": active, "archived_boards": archived,
+         "msg": request.query_params.get("msg")},
+    )
 
 
 @router.get("/boards/new", response_class=HTMLResponse)
@@ -108,6 +151,7 @@ def board_edit(board_id: str, request: Request, db: Session = Depends(get_db)):
     if board is None:
         return HTMLResponse("Board not found", status_code=404)
     env_status = get_settings().board_env_status(board.credentials_ref) if board.credentials_ref else []
+    attempt_count = db.query(PostingAttempt).filter_by(board_id=board.id).count()
     return templates.TemplateResponse(
         request,
         "board_form.html",
@@ -115,6 +159,7 @@ def board_edit(board_id: str, request: Request, db: Session = Depends(get_db)):
             "board": board, "DistributionType": DistributionType, "BoardStatus": BoardStatus,
             "env_status": env_status, "coverage": board.coverage or {},
             "proposals": (board.coverage or {}).get("proposals", []),
+            "attempt_count": attempt_count,
         },
     )
 
@@ -181,6 +226,7 @@ async def board_save(
     default_for_tags: str = Form(default=""),
     notes: str = Form(default=""),
     name_format: str = Form(default=""),
+    form_layout: str = Form(default=""),
     region: str = Form(default=""),
     field: str = Form(default=""),
     login_url: str = Form(default=""),
@@ -189,6 +235,17 @@ async def board_save(
     login_submit: str = Form(default=""),
     run_automap: str = Form(default="", alias="automap"),
 ):
+    # Duplicate guard: refuse to create (or rename/re-URL) a board that already
+    # exists under the same name or the same site URL.
+    dup = _find_duplicate(db, name, url, post_url, exclude_id=board_id)
+    if dup is not None:
+        msg = (
+            f"Not saved — '{dup.name}' already exists with this name/URL. "
+            f"Open it from the board library and edit it instead of adding a duplicate."
+        )
+        back = f"/boards/{board_id}/edit" if board_id else "/boards/new"
+        return RedirectResponse(url=f"{back}?msg={quote(msg)}", status_code=303)
+
     board = db.get(BoardConfig, board_id) if board_id else None
     if board is None:
         board = BoardConfig(name=name)
@@ -214,6 +271,8 @@ async def board_save(
         meta["region"] = region
     if field:
         meta["field"] = field
+    if form_layout:
+        meta["form_layout"] = form_layout
     board.meta = meta
 
     # JSON editors — keep prior value on parse error rather than wiping config.
@@ -259,9 +318,38 @@ async def board_save(
             msg = f"Saved and auto-mapped {n} fields — no submit button found; add one to go live."
         else:
             msg = "Saved, but auto-map found too few fields (form may need login or didn't render)."
+        msg += _automap_nav_note(result)
         return RedirectResponse(url=f"/boards/{board.id}/edit?msg={quote(msg)}", status_code=303)
 
     return RedirectResponse(url="/boards", status_code=303)
+
+
+@router.post("/boards/{board_id}/delete")
+def board_delete(board_id: str, db: Session = Depends(get_db)):
+    """Delete a board. Boards with posting history are archived instead (their
+    per-job status rows keep rendering); boards never used are removed outright."""
+    board = db.get(BoardConfig, board_id)
+    if board is None:
+        return RedirectResponse(url="/boards", status_code=303)
+    name = board.name
+    has_history = db.query(PostingAttempt).filter_by(board_id=board.id).count() > 0
+    if has_history:
+        board.archived = True
+        msg = f"'{name}' archived — it has posting history, so it's hidden but not erased. Restore it anytime below."
+    else:
+        db.delete(board)
+        msg = f"'{name}' deleted."
+    db.commit()
+    return RedirectResponse(url=f"/boards?msg={quote(msg)}", status_code=303)
+
+
+@router.post("/boards/{board_id}/restore")
+def board_restore(board_id: str, db: Session = Depends(get_db)):
+    board = db.get(BoardConfig, board_id)
+    if board is not None:
+        board.archived = False
+        db.commit()
+    return RedirectResponse(url=f"/boards?msg={quote(board.name + ' restored.') if board else ''}", status_code=303)
 
 
 # ───────────────────────── auto-map from URL (R-15) ─────────────────────────
@@ -300,7 +388,18 @@ async def board_automap(board_id: str, db: Session = Depends(get_db)):
         msg = f"Auto-mapped {n} fields, but no submit button found — add a 'submit' selector."
     else:
         msg = "Too few fields found — the form may need login or didn't finish rendering. Existing map kept."
+    msg += _automap_nav_note(result)
     return RedirectResponse(f"/boards/{board_id}/edit?msg={quote(msg)}", status_code=303)
+
+
+def _automap_nav_note(result: dict) -> str:
+    """Human note about multi-page navigation appended to auto-map messages."""
+    note = ""
+    if result.get("pages", 1) > 1:
+        note += f" Walked a {result['pages']}-page wizard."
+    if result.get("nav_blocked"):
+        note += f" ⚠ Wizard stopped early — {result['nav_blocked']}."
+    return note
 
 
 # ───────────────────────── screenshot view (R-16) ─────────────────────────

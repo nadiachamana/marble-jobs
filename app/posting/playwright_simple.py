@@ -1,20 +1,25 @@
 """Playwright (simple) engine (R-08): no authentication.
 
-Opens the board's post URL, fills the form from the board's field_map, submits,
-and captures a screenshot on failure. Conventions a board's field_map may set:
+Opens the board's post URL and runs the shared form flow (single page or
+multi-page wizard — see base.run_form_flow). Conventions a board's field_map
+may set:
   "submit": {"selector": "...", "type": "click"}   -> the submit button
+  "nav": {"post_link": ..., "next": ..., "final_submit": ..., "pages": N}
   "_success_selector": "..."                          -> element proving success
   "_result_url_selector": "..."                       -> link to the live posting
 """
 
 from __future__ import annotations
 
-from app.posting.base import SCREENSHOT_DIR, PostResult, fill_form
+from app.posting.base import PostResult, capture_screenshot, run_form_flow
 
 
-async def post(job, board, fields: dict, attempt_id: str) -> PostResult:
-    field_map = dict(board.field_map or {})
-    if not field_map:
+async def post(job, board, fields: dict, attempt_id: str, *,
+               headful: bool = False, hold: bool = False) -> PostResult:
+    from app.automap import clean_post_url
+    from playwright.async_api import async_playwright
+
+    if not (board.field_map or {}):
         return PostResult(
             success=False,
             error=(
@@ -23,61 +28,46 @@ async def post(job, board, fields: dict, attempt_id: str) -> PostResult:
             ),
         )
 
-    submit = field_map.pop("submit", None)
-    success_selector = field_map.pop("_success_selector", None)
-    result_url_selector = field_map.pop("_result_url_selector", None)
-
-    from playwright.async_api import async_playwright
-
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
+        browser = await p.chromium.launch(
+            headless=not headful, args=["--no-sandbox", "--disable-dev-shm-usage"])
         page = await browser.new_page()
         try:
-            await page.goto(board.post_url, wait_until="domcontentloaded", timeout=30000)
-            filled = await fill_form(page, field_map, board.select_map or {}, fields)
-
-            if not submit:
-                # Never report success without actually submitting.
-                shot = await _screenshot(page, attempt_id)
-                return PostResult(
-                    success=False,
-                    error="Filled the form but no 'submit' selector is configured — "
-                    "add one to field_map (or use assisted mode) before live posting.",
-                    screenshot_path=shot,
-                    detail=f"Filled: {', '.join(filled)}",
-                )
-
-            selector = submit if isinstance(submit, str) else submit.get("selector")
-            await page.click(selector)
-            await page.wait_for_load_state("networkidle", timeout=30000)
-
-            if success_selector:
-                await page.wait_for_selector(success_selector, timeout=15000)
-
-            result_url = None
-            if result_url_selector:
-                try:
-                    result_url = await page.get_attribute(result_url_selector, "href")
-                except Exception:
-                    result_url = None
-
-            return PostResult(
-                success=True,
-                result_url=result_url,
-                detail=f"Filled: {', '.join(filled)}",
-            )
+            await page.goto(clean_post_url(board.post_url), wait_until="domcontentloaded", timeout=30000)
+            result = await run_form_flow(page, board, fields, attempt_id,
+                                         job_title=job.title, hold=hold)
+            if hold and result.held:
+                result = await _hold_handover(page, board, job, result)
+            return result
         except Exception as exc:  # noqa: BLE001
-            shot = await _screenshot(page, attempt_id)
+            shot = await capture_screenshot(page, attempt_id)
             return PostResult(success=False, error=str(exc), screenshot_path=shot)
         finally:
             await browser.close()
 
 
-async def _screenshot(page, attempt_id: str) -> str | None:
-    try:
-        SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
-        path = SCREENSHOT_DIR / f"{attempt_id}.png"
-        await page.screenshot(path=str(path), full_page=True)
-        return str(path)
-    except Exception:
-        return None
+async def _hold_handover(page, board, job, result: PostResult) -> PostResult:
+    """Local hold-mode test: everything is filled; a human reviews the wizard
+    and clicks the final submit themselves, then we record the outcome."""
+    import asyncio
+
+    from app.posting.base import find_result_url
+
+    print("\n   ✋ HOLD — all pages filled; the final submit was NOT clicked.")
+    print("      In the browser window: review each page (Back/Next), fix anything,")
+    print("      then click the final submit (e.g. 'Add Vacancy') yourself.")
+    await asyncio.to_thread(input, "\n   Press Enter here AFTER submitting (or to abort)… ")
+    ok = (await asyncio.to_thread(input, "   Did it post successfully? [y/N] ")).strip().lower().startswith("y")
+    if not ok:
+        return PostResult(success=False, error="Hold-mode run not submitted.",
+                          detail=result.detail, screenshot_path=result.screenshot_path)
+    result_url = await find_result_url(page, board, job.title)
+    if result_url:
+        typed = (await asyncio.to_thread(
+            input, f"   Live post URL — Enter to accept, or paste another:\n      {result_url}\n   > ")).strip()
+        result_url = typed or result_url
+    else:
+        result_url = (await asyncio.to_thread(
+            input, "   Paste the live posting URL (optional): ")).strip() or None
+    return PostResult(success=True, result_url=result_url,
+                      detail=(result.detail or "") + " · submitted by human (hold mode)")

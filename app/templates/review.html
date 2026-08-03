@@ -101,7 +101,7 @@
 <div class="panel">
   <h2 style="margin-top:0">Posting status</h2>
   <table>
-    <thead><tr><th>Board</th><th>Status</th><th>Detail / error</th><th>Apply URL used</th><th></th></tr></thead>
+    <thead><tr><th>Board</th><th>Status</th><th>Detail / error</th><th>Live post</th><th>Apply URL used</th><th></th></tr></thead>
     <tbody>
       {% for a in job.attempts %}
       <tr>
@@ -110,20 +110,32 @@
             {% if a.retry_count %}<span class="muted">·{{ a.retry_count }}×</span>{% endif %}</td>
         <td class="muted">
           {{ a.error_message or '—' }}
-          {% if a.result_url %}<br><a href="{{ a.result_url }}" target="_blank">live posting ↗</a>{% endif %}
           {% if a.screenshot_path %}<br><a href="/attempts/{{ a.id }}/screenshot" target="_blank">failure screenshot ↗</a>{% endif %}
+        </td>
+        <td>
+          {% if a.result_url %}
+          <a href="{{ a.result_url }}" target="_blank">View post ↗</a>
+          <details style="margin-top:4px">
+            <summary class="muted" style="font-size:11px; cursor:pointer">edit link</summary>
+            <form method="post" action="/attempts/{{ a.id }}/result_url" style="margin:4px 0 0; display:flex; gap:4px">
+              <input type="url" name="result_url" value="{{ a.result_url }}" style="font-size:11px; padding:3px 6px; width:130px">
+              <button class="btn small secondary" type="submit">Save</button>
+            </form>
+          </details>
+          {% else %}
+          <form method="post" action="/attempts/{{ a.id }}/result_url" style="margin:0; display:flex; gap:4px">
+            <input type="url" name="result_url" value="" placeholder="paste post URL" style="font-size:11px; padding:3px 6px; width:130px">
+            <button class="btn small secondary" type="submit">Save</button>
+          </form>
+          {% endif %}
         </td>
         <td class="mono">{{ a.resolved_apply_url or '—' }}</td>
         <td>
           {% if a.status.value in ['failed','skipped','pending_retry'] %}
-          <form method="post" action="/attempts/{{ a.id }}/retry" style="margin:0 0 6px">
+          <form method="post" action="/attempts/{{ a.id }}/retry" style="margin:0">
             <button class="btn small secondary" type="submit">Retry</button>
           </form>
           {% endif %}
-          <form method="post" action="/attempts/{{ a.id }}/result_url" style="margin:0; display:flex; gap:4px">
-            <input type="url" name="result_url" value="{{ a.result_url or '' }}" placeholder="live posting URL" style="font-size:11px; padding:3px 6px">
-            <button class="btn small secondary" type="submit">Save link</button>
-          </form>
         </td>
       </tr>
       {% endfor %}

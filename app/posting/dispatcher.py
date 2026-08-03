@@ -133,7 +133,12 @@ async def run_dispatch(job_id: str) -> None:
         session.commit()
 
         board_ids = list(job.selected_board_ids or [])
-        boards = session.query(BoardConfig).filter(BoardConfig.id.in_(board_ids)).all()
+        # Archived boards can linger in an old job's saved selection — never post to them.
+        boards = (
+            session.query(BoardConfig)
+            .filter(BoardConfig.id.in_(board_ids), BoardConfig.archived.isnot(True))
+            .all()
+        )
         # Preserve the selection order.
         by_id = {b.id: b for b in boards}
 

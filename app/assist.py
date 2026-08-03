@@ -20,13 +20,13 @@ from datetime import datetime, timezone
 from app.config import get_settings
 from app.db import SessionLocal
 from app.models import BoardConfig, JobQueue, PostingAttempt, PostingStatus
-from app.posting.base import build_master_fields, translate_value
+from app.posting.base import build_master_fields, find_result_url_sync, translate_value
 from app.posting.utm import construct_apply_url
 
 settings = get_settings()
 
 # field_map keys that aren't form fields to fill.
-_CONTROL_KEYS = {"login", "submit", "_success_selector", "_result_url_selector"}
+_CONTROL_KEYS = {"login", "submit", "nav", "_success_selector", "_result_url_selector"}
 
 _assist_sessionmaker = None
 
@@ -104,9 +104,11 @@ def _fill(page, board, fields: dict) -> tuple[list[str], list[str]]:
 
 
 def _db_location() -> str:
-    if settings.is_sqlite:
-        return "LOCAL SQLite (this computer)"
-    return "the production database"
+    # The assist tools write wherever _session() points: production when
+    # ASSIST_DATABASE_URL is set, the local DB otherwise.
+    if settings.assist_database_url.strip() or not settings.is_sqlite:
+        return "the production database"
+    return "LOCAL SQLite (this computer)"
 
 
 def _job_not_found(session, job_id: str) -> None:
@@ -233,7 +235,17 @@ def assist(job_id: str, board_name: str) -> None:
             attempt.error_message = "Posted via assisted mode." if ok else "Assisted attempt not completed."
             if ok:
                 board.last_used_at = _now()
-                link = input("   Paste the live posting URL (optional, shows in the dashboard): ").strip()
+                # Try to spot the live-posting link on whatever page is showing
+                # (confirmation pages usually have a "View job" style link).
+                detected = None
+                try:
+                    detected = find_result_url_sync(page, board, job.title)
+                except Exception:  # noqa: BLE001
+                    pass
+                if detected:
+                    link = input(f"   Live posting URL — press Enter to accept, or paste another:\n      {detected}\n   > ").strip() or detected
+                else:
+                    link = input("   Paste the live posting URL (optional, shows in the dashboard): ").strip()
                 if link:
                     attempt.result_url = link
             attempt.finished_at = _now()
@@ -251,10 +263,83 @@ def assist(job_id: str, board_name: str) -> None:
             except Exception:  # noqa: BLE001
                 pass
 
-            db = "the production dashboard" if not settings.is_sqlite else "the local DB"
-            print(f"\n   Recorded: {attempt.status.value} → saved to {db} + Slack. You can close this.\n")
+            print(f"\n   Recorded: {attempt.status.value} → saved to {_db_location()} + Slack. You can close this.\n")
         finally:
             browser.close()
+
+
+def hold_test(job_id: str, board_name: str) -> None:
+    """Run the REAL posting engine locally in a visible browser, but stop
+    before the final submit so a human reviews the wizard and clicks
+    'Add Vacancy' / 'Post' themselves. Used to validate a newly mapped
+    (especially multi-page) board before enabling full auto-submit.
+
+    Usage: python -m app.assist <job_id> "<board name>" --hold
+    """
+    import anyio
+
+    from app.models import DistributionType
+    from app.posting import playwright_auth, playwright_simple
+
+    session = _session()
+    job = session.get(JobQueue, job_id)
+    if job is None:
+        _job_not_found(session, job_id)
+        return
+    board = session.query(BoardConfig).filter_by(name=board_name).one_or_none()
+    if board is None:
+        print(f"Board {board_name!r} not found.")
+        return
+
+    attempt = (
+        session.query(PostingAttempt).filter_by(job_id=job.id, board_id=board.id).one_or_none()
+    )
+    if attempt is None:
+        attempt = PostingAttempt(job_id=job.id, board_id=board.id)
+        session.add(attempt)
+    attempt.status = PostingStatus.in_progress
+    attempt.started_at = _now()
+    resolved = construct_apply_url(job, board.utm_source)
+    attempt.resolved_apply_url = resolved
+    session.commit()
+
+    fields = build_master_fields(job, board, resolved)
+    engine = (playwright_auth if board.distribution_type == DistributionType.playwright_auth
+              else playwright_simple)
+    nav = (board.field_map or {}).get("nav") or {}
+    print(f"\n▶ HOLD-MODE test: {job.title!r} → {board.name}")
+    if nav.get("pages") or any(isinstance(s, dict) and s.get("page", 1) > 1
+                               for s in (board.field_map or {}).values()):
+        print("   Multi-page wizard — the engine fills each page and clicks Next itself.")
+    print("   A browser window will open; the final submit stays for YOU to click.\n")
+
+    async def _go():
+        return await engine.post(job, board, fields, attempt.id, headful=True, hold=True)
+
+    result = anyio.run(_go)
+
+    attempt.status = PostingStatus.success if result.success else PostingStatus.failed
+    attempt.error_message = result.detail if result.success else (result.error or "Hold-mode run not completed.")
+    attempt.result_url = result.result_url
+    attempt.screenshot_path = result.screenshot_path
+    attempt.finished_at = _now()
+    if result.success:
+        board.last_used_at = _now()
+    session.commit()
+
+    try:
+        from app.notify import _post_slack
+
+        icon = ":white_check_mark:" if result.success else ":x:"
+        _post_slack(
+            f"{icon} *Hold-mode posting* — {board.name} → {job.title}: *{attempt.status.value}*"
+            + (f"\n{result.result_url}" if result.result_url else ""),
+            thread_ts=job.slack_ts,
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+    print(f"\n   Recorded: {attempt.status.value} → saved to {_db_location()}.\n")
 
 
 def _list(job_id: str) -> None:
@@ -278,13 +363,18 @@ def _list(job_id: str) -> None:
 
 if __name__ == "__main__":
     args = sys.argv[1:]
+    hold = "--hold" in args
+    args = [a for a in args if a != "--hold"]
     if len(args) >= 2 and args[0] == "--list":
         _list(args[1])
     elif len(args) == 1 and args[0] != "--list":
         # A bare job_id → show that job's boards + the exact command to use.
         _list(args[0])
+    elif len(args) >= 2 and hold:
+        hold_test(args[0], " ".join(args[1:]))
     elif len(args) >= 2:
         assist(args[0], " ".join(args[1:]))
     else:
-        print('Usage: python -m app.assist <job_id> "<board name>"')
-        print('       python -m app.assist <job_id>          # list this job\'s boards')
+        print('Usage: python -m app.assist <job_id> "<board name>"          # human-first assisted posting')
+        print('       python -m app.assist <job_id> "<board name>" --hold   # engine fills, human clicks submit')
+        print('       python -m app.assist <job_id>                          # list this job\'s boards')

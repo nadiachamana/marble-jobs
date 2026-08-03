@@ -62,6 +62,9 @@ _ADDED_COLUMNS = {
         # v2 schema columns
         "required_fields": "JSON", "board_config": "JSON", "name_format": "VARCHAR(16)",
         "field_notes": "JSON", "coverage": "JSON", "schema_version": "INTEGER",
+        # Soft-delete flag. Pre-existing rows get NULL, so queries must filter
+        # with archived IS NOT TRUE (isnot(True)), never archived == False.
+        "archived": "BOOLEAN",
     },
 }
 

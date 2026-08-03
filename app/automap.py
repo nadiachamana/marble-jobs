@@ -75,6 +75,24 @@ _TYPE_HINTS = {"email": "contact_email", "url": "apply_url", "date": "deadline",
 
 _SUBMIT_WORDS = ["submit", "post job", "post your job", "publish", "create", "save", "envoyer", "poster", "déposer"]
 
+# ── multi-page / navigation keywords ──
+# Link/button that leads FROM a dashboard or jobs-list page TO the posting form
+# (e.g. targetconnect lands on the employer jobs list after login; the real form
+# is behind "Add new vacancy").
+_POST_ENTRY_WORDS = [
+    "add new vacancy", "add a vacancy", "add vacancy", "post a job", "post your job",
+    "post new job", "post job", "add a job", "add job post", "add new job", "add job",
+    "new vacancy", "create a job", "create job", "publish a job", "submit a job",
+    "déposer une offre", "publier une offre",
+]
+# Wizard step navigation.
+_NEXT_WORDS = ["next", "continue", "suivant", "continuer", "proceed"]
+# Final wizard submit (checked before Next so the walker NEVER clicks it).
+_FINAL_WORDS = ["add vacancy", "post job", "post your job", "post vacancy", "publish",
+                "submit", "finish", "envoyer", "publier"]
+
+MAX_WIZARD_PAGES = 6
+
 
 def _attr_sel(attr: str, val: str) -> str | None:
     """[attr='val'] with a quote style that survives quotes in val; None if both."""
@@ -101,6 +119,11 @@ def _selector(f: dict) -> str | None:
         return sel
     if name and (sel := _attr_sel("name", name)):
         return sel
+    # Rich-text editors (Summernote & co) often have no id/name — address by
+    # their first class ("div.note-editable"). Page-scoped fills keep it unique.
+    cls = f.get("cls") or ""
+    if f.get("widget") == "rich_text" and cls and re.fullmatch(r"[A-Za-z_][\w-]*", cls):
+        return f"{f['tag']}.{cls}"
     # Typed inputs that are almost always unique on a job-post form.
     itype = (f.get("type") or "").lower()
     if f["tag"] == "input" and itype in ("email", "tel", "url"):
@@ -186,6 +209,13 @@ def propose_field_map(fields: list[dict]) -> tuple[dict, dict]:
             field_map[master] = {"selector": f"#{f['id']}_ifr", "type": "richtext"}
         else:
             field_map[master] = selector
+        # Multi-page wizard: remember which page this control lives on.
+        if f.get("page", 1) > 1:
+            spec = field_map[master]
+            if isinstance(spec, str):
+                spec = {"selector": spec, "type": "fill"}
+            spec["page"] = f["page"]
+            field_map[master] = spec
 
     # Submit button: prefer an explicit submit, else a button whose text reads like one.
     submit = None
@@ -234,17 +264,289 @@ _EVAL = """els => els.map(e => {
     const opts = tag==='select'
         ? Array.from(e.options).map(o => o.textContent.trim()).filter(Boolean) : [];
     const required = !!(e.required || e.getAttribute('aria-required')==='true' || /\\*/.test(label));
+    const vis = !!e.getClientRects().length && window.getComputedStyle(e).visibility !== 'hidden';
+    const cls = (typeof e.className === 'string' ? e.className : '').trim().split(/\\s+/)[0] || '';
+    const checked = (type==='radio' || type==='checkbox') ? !!e.checked : undefined;
     return { tag, type, role, id: e.id||'', name: e.getAttribute('name')||'', ph: e.getAttribute('placeholder')||'',
              text: (e.textContent||'').trim().slice(0,40), label: label.slice(0,90),
-             widget, options: opts, required };
+             widget, options: opts, required, vis, cls, checked };
 })"""
 
+_HEADINGS_EVAL = "els => els.map(e => (e.innerText||'').trim()).filter(Boolean).slice(0, 8)"
 
-async def inspect_form(post_url: str, login: dict | None, creds: tuple) -> dict:
+
+async def _headings(page) -> list[str]:
+    try:
+        return await page.eval_on_selector_all("h1, h2, h3, legend", _HEADINGS_EVAL)
+    except Exception:  # noqa: BLE001
+        return []
+
+
+# Visible clickable elements (links included — the field _EVAL skips <a>).
+_CLICKABLE_EVAL = """els => els.map(e => {
+    const visible = !!e.getClientRects().length;
+    const text = ((e.innerText || e.value || e.getAttribute('aria-label') || '')
+                  .trim().slice(0, 60)).replace(/\\s+/g, ' ');
+    return { tag: e.tagName.toLowerCase(), id: e.id || '', text, visible };
+}).filter(x => x.visible && x.text)"""
+
+
+async def _clickables(page) -> list[dict]:
+    try:
+        return await page.eval_on_selector_all(
+            "a, button, input[type=submit], [role=button]", _CLICKABLE_EVAL)
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _match_clickable(clickables: list[dict], words: list[str]) -> str | None:
+    """Selector for the first clickable whose text matches one of `words`.
+
+    The length guard stops a paragraph-sized element that merely *contains*
+    "post a job" from matching — we want short button/link labels.
+    """
+    for c in clickables:
+        text = c["text"].lower()
+        for w in words:
+            if w in text and len(text) <= len(w) + 25:
+                if c["id"] and re.fullmatch(r"[A-Za-z_][\w-]*", c["id"]):
+                    return f"#{c['id']}"
+                if c["tag"] == "input":  # :has-text doesn't see an input's value attr
+                    return f"input[type='submit'][value*=\"{w}\" i]"
+                return f"{c['tag']}:has-text(\"{w}\")"
+    return None
+
+
+def _looks_like_post_form(fields: list[dict]) -> bool:
+    """Is this page the posting form itself (vs a jobs list / dashboard)?
+
+    A rich-text editor, or 3+ text inputs matching strong job-post concepts,
+    says form. A list page's filter dropdowns are selects, which don't count —
+    that's exactly what mis-mapped Imperial's filter bar as job fields.
+    """
+    strong = 0
+    for f in fields:
+        if f.get("widget") == "rich_text":
+            return True
+        if f["tag"] in ("input", "textarea") and (f.get("type") or "text") in (
+                "", "text", "url", "email", "number", "date"):
+            for master in ("title", "description_plain", "company_name", "apply_url",
+                           "contact_email", "salary", "deadline"):
+                if _score(f, _MASTER_RULES[master]) >= 5:
+                    strong += 1
+                    break
+    return strong >= 3
+
+
+def _page_signature(fields: list[dict], headings: list[str] | tuple = ()) -> tuple:
+    """Fingerprint of a wizard step — used to tell if 'Next' advanced.
+
+    Headings ("Advertising details" → "Job details") are the primary signal.
+    Control ids/names have digit runs stripped: sites like targetconnect stamp
+    fresh timestamps into dialog ids on every render, which made every rescan
+    look like a new page even when validation kept us on the same step.
+    """
+    def norm(s: str | None) -> str:
+        return re.sub(r"\d+", "", s or "")
+
+    ctl = tuple(sorted({(f["tag"], norm(f.get("id")), norm(f.get("name")),
+                         (f.get("label") or "")[:30])
+                        for f in fields if f.get("vis", True)}))
+    return (tuple(headings), ctl)
+
+
+def _advanced(sig_before: tuple, sig_after: tuple) -> bool:
+    """Did 'Next' really move to a new wizard step?
+
+    When headings exist, THEY must change — filling a form can reveal extra
+    controls (an 'apply by URL' checkbox shows the URL box), which changes the
+    control set without leaving the step. Control-set change only counts when
+    the page has no headings to compare.
+    """
+    heads_before, ctl_before = sig_before
+    heads_after, ctl_after = sig_after
+    if heads_before or heads_after:
+        return heads_before != heads_after
+    return ctl_before != ctl_after
+
+
+def clean_post_url(url: str) -> str:
+    """Strip expiring Spring-WebFlow style tokens (?execution=e1s1) from a post
+    URL — targetconnect tokens die after the session, so a stored one 404s."""
+    from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+    parts = urlsplit(url)
+    if "execution=" not in (parts.query or ""):
+        return url
+    q = [(k, v) for k, v in parse_qsl(parts.query) if k != "execution"]
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(q), parts.fragment))
+
+
+_SAMPLE_TEXT = "Sample data for field mapping — not published"
+
+
+def _dateish_select(f: dict) -> bool:
+    """A select that's one part of a split date widget (day/month/year)."""
+    ident = f"{f.get('id') or ''} {f.get('name') or ''} {f.get('label') or ''}".lower()
+    if any(w in ident for w in ("date", "month", "year", "day", "expiry")):
+        return True
+    opts = [o for o in (f.get("options") or []) if o]
+    return bool(opts) and all(re.fullmatch(r"\d{1,4}", o) for o in opts[:8])
+
+
+def _date_part_of(f: dict) -> str:
+    """Which part of a split date a select holds: 'month' | 'year' | 'day'."""
+    ident = f"{f.get('id') or ''} {f.get('name') or ''}".lower()
+    if "month" in ident:
+        return "month"
+    if "year" in ident:
+        return "year"
+    if "day" in ident or "date" in ident:
+        return "day"
+    opts = [o for o in (f.get("options") or []) if o]
+    if opts and all(re.fullmatch(r"\d{4}", o) for o in opts[:6]):
+        return "year"
+    if opts and any(re.match(r"[A-Za-z]{3}", o) for o in opts[:6]):
+        return "month"
+    return "day"
+
+
+async def _sample_date_select(page, sel: str, f: dict) -> None:
+    """Pick a NEAR-future sample date part (~45 days out) — boards often cap how
+    far ahead a closing date may be (Imperial: max 90 days), so 'last option'
+    style far-future picks get rejected."""
+    from datetime import date, timedelta
+
+    target = date.today() + timedelta(days=45)
+    cands = {
+        "day": [f"{target.day:02d}", str(target.day)],
+        "month": [target.strftime("%b"), target.strftime("%B"), f"{target.month:02d}", str(target.month)],
+        "year": [str(target.year)],
+    }[_date_part_of(f)]
+    for cand in cands:
+        for by in ("label", "value"):
+            try:
+                await page.select_option(sel, **{by: cand}, timeout=1500)
+                return
+            except Exception:  # noqa: BLE001
+                continue
+    opts = f.get("options") or []
+    if len(opts) > 1:  # fallback: first real option
+        await page.select_option(sel, index=1, timeout=2000)
+
+
+async def _fill_sample(page, fields: list[dict], everything: bool = False) -> None:
+    """Best-effort placeholder fill so a wizard's Next passes validation.
+
+    Only ever used during discovery, and the walker never clicks the final
+    submit — nothing is published. Fills required controls (or all, on retry).
+    Never overwrites values already present (e.g. a prefilled publish date)."""
+    seen_groups: set[str] = set()
+    for f in fields:
+        if f["tag"] not in ("input", "textarea", "select") or f.get("widget") == "button":
+            continue
+        if (f.get("type") or "").lower() in ("hidden", "submit", "button", "file", "image"):
+            continue
+        if not f.get("vis", True):
+            continue
+        required = f.get("required", False)
+        if not everything and not required:
+            continue
+        sel = _selector(f)
+        if not sel:
+            continue
+        widget = f.get("widget")
+        itype = (f.get("type") or "").lower()
+        try:
+            if widget == "native_select":
+                if await page.input_value(sel, timeout=1200):
+                    continue  # keep prefilled values (publish date etc.)
+                if _dateish_select(f):
+                    await _sample_date_select(page, sel, f)
+                else:
+                    opts = f.get("options") or []
+                    await page.select_option(sel, index=1 if len(opts) > 1 else 0, timeout=2500)
+            elif widget in ("radio", "checkbox"):
+                group = f.get("name") or sel
+                if group in seen_groups:
+                    continue
+                seen_groups.add(group)
+                # Leave groups that already have a selection (defaults) alone.
+                already = any(g.get("checked") for g in fields
+                              if (g.get("name") or _selector(g)) == group)
+                if not already and (required or everything):
+                    await page.check(sel, timeout=2500)
+            elif widget == "rich_text":
+                if re.fullmatch(r"mce_\d+", f.get("id") or ""):
+                    await page.frame_locator(f"#{f['id']}_ifr").locator("body").fill(_SAMPLE_TEXT, timeout=2500)
+                else:
+                    await page.locator(sel).first.fill(_SAMPLE_TEXT, timeout=2500)
+            elif itype == "email":
+                await page.fill(sel, "hiring@marble.studio", timeout=2500)
+            elif itype == "url":
+                await page.fill(sel, "https://marble.studio", timeout=2500)
+            elif itype == "tel":
+                await page.fill(sel, "+33700000000", timeout=2500)
+            elif itype == "number":
+                await page.fill(sel, "10", timeout=2500)
+            elif itype == "date":
+                await page.fill(sel, "2030-01-31", timeout=2500)
+            else:
+                # Don't overwrite anything already there.
+                if not await page.input_value(sel, timeout=1500):
+                    # Type by NAME hints too — a text input called
+                    # "applicationURL" fails server validation on plain text.
+                    ident = f"{f.get('id') or ''} {f.get('name') or ''} {f.get('label') or ''}".lower()
+                    if "url" in ident or "link" in ident or "website" in ident:
+                        value = "https://marble.studio"
+                    elif "mail" in ident:
+                        value = "hiring@marble.studio"
+                    elif "phone" in ident or "tel" in ident:
+                        value = "+33700000000"
+                    elif "salary" in ident or "number" in ident:
+                        value = "10"
+                    else:
+                        value = _SAMPLE_TEXT
+                    await page.fill(sel, value, timeout=2500)
+        except Exception:  # noqa: BLE001 — sample fill is opportunistic
+            continue
+
+    # Rich-text editors with no id/name (Summernote's div.note-editable etc.)
+    # are invisible to the per-field loop — fill any empty visible ones directly.
+    try:
+        editors = page.locator("[contenteditable=true]")
+        for i in range(min(await editors.count(), 4)):
+            ed = editors.nth(i)
+            if await ed.is_visible() and not (await ed.inner_text()).strip():
+                await ed.fill(_SAMPLE_TEXT, timeout=2000)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+async def inspect_form(post_url: str, login: dict | None, creds: tuple,
+                       form_layout: str = "auto") -> dict:
     """Render the form (logging in if needed) and return fields + page flags."""
     from playwright.async_api import async_playwright
 
-    out: dict = {"fields": [], "bot_challenge": False, "needs_login": False, "final_url": ""}
+    post_url = clean_post_url(post_url)
+
+    async def _scan(page) -> list[dict]:
+        raw = await page.eval_on_selector_all(
+            "input, textarea, select, button, [role=combobox], [contenteditable=true]", _EVAL)
+        out_fields = []
+        for f in raw:
+            # type=hidden server fields can't be filled by Playwright anyway.
+            if (f.get("type") or "").lower() == "hidden":
+                continue
+            # Invisible controls with timestamped ids are template/dialog junk
+            # (targetconnect renders hundreds) — they poison classification.
+            if not f.get("vis", True) and re.search(r"\d{6,}", f.get("id") or ""):
+                continue
+            out_fields.append(f)
+        return out_fields
+
+    out: dict = {"fields": [], "bot_challenge": False, "needs_login": False,
+                 "final_url": "", "nav": {}, "pages": 1, "nav_blocked": None}
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
         page = await (await browser.new_context()).new_page()
@@ -285,9 +587,73 @@ async def inspect_form(post_url: str, login: dict | None, creds: tuple) -> dict:
             if await page.locator("[id*=recaptcha], .g-recaptcha, iframe[src*=recaptcha]").count():
                 out["bot_challenge"] = True
 
+            fields = await _scan(page)
+
+            # ── smart navigation: are we on the posting form, or a jobs list /
+            # dashboard the post_url redirected to after login? If a "post a
+            # job"-style link exists and the page doesn't look like the form,
+            # follow the link (and remember it so posting can do the same).
+            if not out["bot_challenge"]:
+                clickables = await _clickables(page)
+                entry = _match_clickable(clickables, _POST_ENTRY_WORDS)
+                if entry and (form_layout == "multi" or not _looks_like_post_form(fields)):
+                    try:
+                        await page.locator(entry).first.click(timeout=8000)
+                        await page.wait_for_load_state("domcontentloaded", timeout=30000)
+                        await page.wait_for_timeout(3000)
+                        out["nav"]["post_link"] = entry
+                        fields = await _scan(page)
+                    except Exception:  # noqa: BLE001 — stay where we are
+                        pass
+
+            # ── wizard walk: map every page of a multi-page form. Sample data
+            # unlocks each Next; the FINAL submit is detected but NEVER clicked.
+            for f in fields:
+                f["page"] = 1
+            all_fields = list(fields)
+            if not out["bot_challenge"] and form_layout != "single":
+                page_no = 1
+                while page_no < MAX_WIZARD_PAGES:
+                    clickables = await _clickables(page)
+                    final_sel = _match_clickable(clickables, _FINAL_WORDS)
+                    next_sel = _match_clickable(clickables, _NEXT_WORDS)
+                    if final_sel and not next_sel:
+                        out["nav"]["final_submit"] = final_sel
+                        break
+                    if not next_sel:
+                        break  # single-page form; the classic submit finder applies
+                    out["nav"]["next"] = next_sel
+                    sig = _page_signature(fields, await _headings(page))
+                    advanced = False
+                    for attempt_all in (False, True):  # required-only first, then everything
+                        await _fill_sample(page, fields, everything=attempt_all)
+                        if attempt_all:
+                            # Filling can reveal new controls (e.g. an "apply by
+                            # URL" checkbox shows the URL box) — pick those up too.
+                            fields = await _scan(page)
+                            await _fill_sample(page, fields, everything=True)
+                        try:
+                            await page.locator(next_sel).first.click(timeout=8000)
+                            await page.wait_for_timeout(3000)
+                        except Exception:  # noqa: BLE001
+                            break
+                        fields = await _scan(page)
+                        if _advanced(sig, _page_signature(fields, await _headings(page))):
+                            advanced = True
+                            break
+                    if not advanced:
+                        out["nav_blocked"] = (
+                            f"page {page_no}: 'Next' did not advance (validation likely "
+                            f"blocked on a field the sample filler couldn't complete)")
+                        break
+                    page_no += 1
+                    for f in fields:
+                        f["page"] = page_no
+                    all_fields.extend(fields)
+                out["pages"] = page_no
+
             out["final_url"] = page.url
-            out["fields"] = await page.eval_on_selector_all(
-                "input, textarea, select, button, [role=combobox], [contenteditable=true]", _EVAL)
+            out["fields"] = all_fields
         finally:
             await browser.close()
     return out
@@ -341,12 +707,22 @@ _CLASSIFY_SYSTEM = (
     "You map a job-board form's controls to Marble's canonical field schema. "
     "Return ONLY JSON of shape:\n"
     '{ "mappings": [ {"selector": "<as given>", "schema_key": "<canonical key or UNMAPPED>", '
-    '"confidence": 0-1, "value_map": {"<board option label>": "<canonical value>"} } ],\n'
+    '"confidence": 0-1, "value_map": {"<board option label>": "<canonical value>"}, '
+    '"part": "day|month|year (only for split date selects)" } ],\n'
     '  "new_field_proposals": [ {"selector": "...", "label": "...", "suggested_key": "namespace.x", '
     '"type": "text|enum|...", "required": true, "reason": "..."} ] }\n'
     "Rules: map each control to the single best canonical key, or UNMAPPED if none fits. "
     "For enum/select/radio controls, build value_map from the control's options to the canonical "
-    "values listed for that key (skip options with no canonical match). Every REQUIRED control must "
+    "values listed for that key. Make value_map COMPLETE: every canonical enum value that has any "
+    "plausible board option must appear (e.g. Full-time must map to the board's closest full-time/"
+    "graduate-position option, even if the wording differs a lot); only omit a canonical value when "
+    "truly nothing on the board corresponds. When ONE date is split "
+    "across several <select> controls (separate day / month / year dropdowns), map EACH select to "
+    "the SAME date schema key and set \"part\" accordingly — this is the only case where a key may "
+    "repeat. Controls carry a \"page\" number when the form is a multi-page wizard; keep mapping "
+    "them all. When a visible control and a hidden "
+    "(visible:false) control represent the same concept, map the VISIBLE one — hidden inputs are "
+    "usually JS-managed backing fields that cannot be typed into. Every REQUIRED control must "
     "either map to a key or appear in new_field_proposals. Propose a new field only for a genuinely "
     "new concept not in the schema.\n\nCanonical schema:\n"
 )
@@ -367,6 +743,7 @@ def classify_with_claude(controls: list[dict]) -> dict:
             "selector": c["selector"], "label": c.get("label") or c.get("ph") or "",
             "name": c.get("name") or "", "widget": c.get("widget"),
             "required": c.get("required", False), "options": (c.get("options") or [])[:40],
+            "page": c.get("page", 1), "visible": c.get("vis", True),
         }
         for c in controls
     ]
@@ -385,6 +762,9 @@ def build_from_classification(controls: list[dict], classification: dict) -> dic
     required_fields: list[str] = []
     unresolved_required: list[str] = []
     used_keys: set[str] = set()
+    # Split date widgets (day/month/year selects mapped to one date key) are
+    # assembled into a single {"type": "date_parts", "day": …, "month": …} spec.
+    date_parts: dict[str, dict] = {}
 
     for m in classification.get("mappings", []):
         key = m.get("schema_key")
@@ -393,6 +773,16 @@ def build_from_classification(controls: list[dict], classification: dict) -> dic
         ctrl = by_selector.get(sel)
         if not ctrl:
             continue
+        pageno = ctrl.get("page", 1)
+        part = (m.get("part") or "").lower()
+        if (part in ("day", "month", "year") and key and key in S.MASTER_SCHEMA and conf >= 0.5):
+            d = date_parts.setdefault(key, {"type": "date_parts"})
+            d[part] = sel
+            if pageno > 1:
+                d["page"] = pageno
+            if ctrl.get("required") and key not in required_fields:
+                required_fields.append(key)
+            continue
         if not key or key == "UNMAPPED" or key not in S.MASTER_SCHEMA or conf < 0.5 or key in used_keys:
             if ctrl.get("required"):
                 unresolved_required.append(f"{ctrl.get('label') or sel}")
@@ -400,11 +790,16 @@ def build_from_classification(controls: list[dict], classification: dict) -> dic
         used_keys.add(key)
         ftype = _WIDGET_TYPE.get(ctrl.get("widget"), "fill")
         if ctrl.get("widget") == "rich_text" and ctrl.get("id", "").startswith("mce_"):
-            field_map[key] = {"selector": f"#{ctrl['id']}_ifr", "type": "richtext"}
-        elif ftype == "fill":
-            field_map[key] = sel
+            spec: dict | str = {"selector": f"#{ctrl['id']}_ifr", "type": "richtext"}
+        elif ftype == "fill" and pageno == 1:
+            spec = sel  # legacy-compatible plain selector
         else:
-            field_map[key] = {"selector": sel, "type": ftype}
+            spec = {"selector": sel, "type": ftype}
+        if pageno > 1:
+            if isinstance(spec, str):
+                spec = {"selector": spec, "type": "fill"}
+            spec["page"] = pageno
+        field_map[key] = spec
         # value translation: invert {board_label: canonical_value} → {canonical_value: board_label}
         vmap = m.get("value_map") or {}
         if vmap:
@@ -418,6 +813,9 @@ def build_from_classification(controls: list[dict], classification: dict) -> dic
             required_fields.append(key)
         if ctrl.get("widget") in ("react_select", "radio"):
             field_notes[key] = f"{ctrl['widget']} widget — verify fill behavior"
+
+    for key, d in date_parts.items():
+        field_map.setdefault(key, d)
 
     submit = _find_submit(controls)
     if submit:
@@ -456,7 +854,11 @@ async def automap_board(board: BoardConfig) -> dict:
         login = {**login, "url": login.get("url") or board.post_url}
     creds = settings.board_credentials(board.credentials_ref or "")
 
-    insp = await inspect_form(board.post_url, login, creds)
+    # "auto" (default) detects wizards by finding a Next button; the board form
+    # can force "single" (never walk) or "multi" (always follow the post link).
+    form_layout = ((board.meta or {}).get("form_layout") or "auto").lower()
+
+    insp = await inspect_form(board.post_url, login, creds, form_layout=form_layout)
     controls = [dict(f, selector=_selector(f) or f.get("tag")) for f in insp["fields"]]
 
     coverage: dict = {}
@@ -479,8 +881,21 @@ async def automap_board(board: BoardConfig) -> dict:
     if not used_claude:
         field_map, select_map = propose_field_map(insp["fields"])
 
+    # Multi-page navigation: the wizard's real final button beats whatever the
+    # generic submit finder picked (which may have been a step's Next button).
+    nav = dict(insp.get("nav") or {})
+    if insp.get("pages", 1) > 1:
+        nav["pages"] = insp["pages"]
+    if nav.get("final_submit"):
+        field_map["submit"] = {"selector": nav["final_submit"], "type": "click"}
+    if nav:
+        field_map["nav"] = nav
+
     if login:
         field_map = {"login": login, **field_map}
+
+    if coverage:
+        coverage["pages"] = insp.get("pages", 1)
 
     return {
         "board": board.name,
@@ -493,12 +908,14 @@ async def automap_board(board: BoardConfig) -> dict:
         "used_claude": used_claude,
         "bot_challenge": insp["bot_challenge"],
         "final_url": insp["final_url"],
+        "pages": insp.get("pages", 1),
+        "nav_blocked": insp.get("nav_blocked"),
         "n_fields": len([f for f in insp["fields"] if f["tag"] in ("input", "textarea", "select")]),
         "assist_reason": "reCAPTCHA / Cloudflare" if insp["bot_challenge"] else None,
     }
 
 
-_CONTROL_KEYS = {"login", "submit", "_success_selector", "_result_url_selector"}
+_CONTROL_KEYS = {"login", "submit", "nav", "_success_selector", "_result_url_selector"}
 
 
 def real_field_count(field_map: dict) -> int:
@@ -549,6 +966,10 @@ if __name__ == "__main__":
 
     res = anyio.run(automap_board, b)
     print(f"\n▶ {res['board']}  ({res['n_fields']} form fields at {res['final_url']})")
+    if res.get("pages", 1) > 1:
+        print(f"   📄 multi-page wizard: {res['pages']} pages walked (final submit never clicked)")
+    if res.get("nav_blocked"):
+        print(f"   ⚠ wizard walk stopped early: {res['nav_blocked']}")
     if res["bot_challenge"]:
         print(f"   🛑 bot-challenge detected → requires assisted mode ({res['assist_reason']})")
     print("\n   Proposed field_map:")
