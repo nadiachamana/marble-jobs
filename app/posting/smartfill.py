@@ -42,6 +42,7 @@ _GAP_EVAL = """els => els.map(e => {
     const required = !!(e.required || e.getAttribute('aria-required')==='true' || /\\*/.test(label));
     const cls = (typeof e.className === 'string' ? e.className : '').trim().split(/\\s+/)[0] || '';
     return { tag, type, id: e.id||'', name: e.getAttribute('name')||'', label: label.slice(0,90),
+             aria: (e.getAttribute('aria-label')||'').slice(0,90),
              value, options: opts, required, vis, cls,
              widget: ce ? 'rich_text' : (tag==='select' ? 'native_select' : type || 'text') };
 })"""
@@ -213,6 +214,99 @@ async def smart_fill(page, fields: dict) -> list[str]:
                 continue
             filled.append(label)
         except Exception:  # noqa: BLE001 — a control it can't reach stays for the human
+            continue
+    if filled:
+        print(f"[smartfill] AI filled: {', '.join(filled)}")
+    return filled
+
+
+def smart_fill_sync(page, fields: dict) -> list[str]:
+    """Sync twin of smart_fill for assisted mode (playwright.sync_api page):
+    same gap collection, same prompt, same guardrails."""
+    from app import llm
+
+    if not llm.available():
+        return []
+    try:
+        controls = page.eval_on_selector_all(
+            "input, textarea, select, [contenteditable=true]", _GAP_EVAL)
+    except Exception:  # noqa: BLE001
+        return []
+    checked_groups = {c.get("name") for c in controls
+                      if c.get("type") in ("radio", "checkbox") and c.get("value") == "checked"}
+    gaps = []
+    for c in controls:
+        if not c.get("vis") or c.get("value"):
+            continue
+        if (c.get("type") or "") in ("hidden", "submit", "button", "file", "image", "search", "password"):
+            continue
+        if c.get("type") in ("radio", "checkbox") and (c.get("name") or c.get("id")) in checked_groups:
+            continue
+        sel = _control_selector(c)
+        if not sel:
+            continue
+        c["selector"] = sel
+        gaps.append(c)
+    gaps.sort(key=lambda c: not c.get("required"))
+    gaps = gaps[:40]
+    if not gaps:
+        return []
+
+    try:
+        body = page.inner_text("body")[:3500]
+    except Exception:  # noqa: BLE001
+        body = ""
+    from datetime import date
+
+    payload = {
+        "today": date.today().isoformat(),
+        "page_text": body,
+        "job": _job_payload(fields),
+        "controls": [
+            {"selector": c["selector"], "label": c.get("label") or c.get("name") or c.get("id"),
+             "widget": c.get("widget"), "type": c.get("type"), "required": c.get("required"),
+             "options": c.get("options") or []}
+            for c in gaps
+        ],
+    }
+    try:
+        out = llm.complete_json(_SYSTEM, json.dumps(payload, ensure_ascii=False), max_tokens=3000)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[smartfill] Claude call failed ({str(exc)[:80]}); leaving gaps for the human")
+        return []
+
+    by_selector = {c["selector"]: c for c in gaps}
+    filled: list[str] = []
+    for a in out.get("actions", []):
+        sel, action, value = a.get("selector"), (a.get("action") or "").lower(), a.get("value")
+        ctrl = by_selector.get(sel)
+        if not ctrl or action in ("skip", "") or value in (None, "", []):
+            continue
+        label = ctrl.get("label") or ctrl.get("name") or sel
+        try:
+            if action == "select":
+                values = value if isinstance(value, list) else [value]
+                legit = [v for v in values if v in (ctrl.get("options") or [])]
+                if not legit:
+                    continue
+                page.select_option(sel, label=legit, timeout=_FILL_TIMEOUT)
+            elif action == "check":
+                page.locator(sel).first.check(timeout=_FILL_TIMEOUT)
+            elif action == "fill":
+                text = str(value)
+                if text.strip() == "__FULL_DESCRIPTION__":
+                    try:
+                        max_chars = int(a.get("max_chars") or 0) or None
+                    except (TypeError, ValueError):
+                        max_chars = None
+                    text = _full_description(fields, max_chars)
+                    if not text:
+                        continue
+                page.locator(sel).first.fill(text, timeout=_FILL_TIMEOUT)
+            else:
+                continue
+            filled.append(label)
+        except Exception:  # noqa: BLE001
             continue
     if filled:
         print(f"[smartfill] AI filled: {', '.join(filled)}")

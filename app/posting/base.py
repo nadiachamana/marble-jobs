@@ -558,6 +558,8 @@ async def run_form_flow(page, board, fields: dict, attempt_id: str,
         shot = await capture_screenshot(page, attempt_id)
         return PostResult(success=False, held=True, screenshot_path=shot, detail=detail)
 
+    pre_submit_url = page.url
+    pre_submit_controls = await _visible_control_count(page)
     await page.locator(final_submit).first.click(timeout=FILL_TIMEOUT_MS)
     try:
         await page.wait_for_load_state("networkidle", timeout=30000)
@@ -566,6 +568,55 @@ async def run_form_flow(page, board, fields: dict, attempt_id: str,
 
     if success_selector:
         await page.wait_for_selector(success_selector, timeout=15000)
+    else:
+        # No explicit success proof configured → require a generic confirmation
+        # signal. A submit click that leaves the form sitting there untouched is
+        # NOT a success (that's how a mis-mapped Fillout board reported
+        # "success" while nothing was ever posted).
+        confirmed = await _submission_confirmed(page, pre_submit_url, pre_submit_controls)
+        if not confirmed:
+            shot = await capture_screenshot(page, attempt_id)
+            return PostResult(
+                success=False,
+                error="Clicked the submit button but found NO confirmation (page and "
+                "form unchanged, no success message) — treating as NOT posted. "
+                "Check the screenshot and the board; the mapping may target the "
+                "wrong button or a multi-step form.",
+                screenshot_path=shot,
+                detail=detail,
+            )
 
     result_url = await find_result_url(page, board, job_title, result_url_selector)
     return PostResult(success=True, result_url=result_url, detail=detail)
+
+
+_CONFIRMATION_WORDS = (
+    "thank you", "thanks for", "successfully", "success!", "submitted",
+    "has been posted", "has been received", "vacancy added", "job added",
+    "under review", "we will review", "confirmation", "your posting",
+    "merci", "a bien été", "envoyée",
+)
+
+
+async def _visible_control_count(page) -> int:
+    try:
+        return await page.eval_on_selector_all(
+            "input, textarea, select",
+            "els => els.filter(e => e.getClientRects().length && (e.type||'') !== 'hidden').length")
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+async def _submission_confirmed(page, pre_url: str, pre_controls: int) -> bool:
+    """Generic did-it-actually-submit signals, any one suffices:
+    the page navigated, a confirmation message appeared, or the form is gone."""
+    if page.url != pre_url:
+        return True
+    try:
+        body = (await page.inner_text("body")).lower()
+    except Exception:  # noqa: BLE001
+        body = ""
+    if any(w in body for w in _CONFIRMATION_WORDS):
+        return True
+    post_controls = await _visible_control_count(page)
+    return pre_controls >= 3 and post_controls <= max(1, pre_controls // 4)

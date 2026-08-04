@@ -57,6 +57,29 @@
     <input type="date" name="deadline" value="{{ job.deadline.date().isoformat() if job.deadline else '' }}">
   </div>
 
+  {% if extras %}
+  <!-- Board-specific requirements: required by selected boards, still empty on the job -->
+  <div class="panel">
+    <h2 style="margin-top:0">Board-specific requirements</h2>
+    <p class="muted">The selected boards require these fields and the job has no value yet.
+      What you enter is saved on the job and used by every posting mode (auto, hold, assisted).
+      If you change the board selection, click <em>Save without dispatching</em> to refresh this list.</p>
+    {% for key, e in extras.items() %}
+    <div style="margin-bottom:10px">
+      <label>{{ e.label }} <span class="muted">— needed by {{ e.boards | join(', ') }}</span></label>
+      {% if e.enum %}
+      <select name="extra__{{ key }}">
+        <option value=""></option>
+        {% for v in e.enum %}<option value="{{ v }}">{{ v }}</option>{% endfor %}
+      </select>
+      {% else %}
+      <input type="text" name="extra__{{ key }}">
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
   <!-- Section 3 — board selection -->
   <div class="panel">
     <h2 style="margin-top:0">Select boards</h2>
@@ -100,36 +123,36 @@
 {% if job.attempts %}
 <div class="panel">
   <h2 style="margin-top:0">Posting status</h2>
-  <table>
-    <thead><tr><th>Board</th><th>Status</th><th>Detail / error</th><th>Live post</th><th>Apply URL used</th><th></th></tr></thead>
+  <table class="posting-table">
+    <thead><tr><th>Board</th><th>Status</th><th>Live post</th><th>Apply URL used</th><th>Detail / error</th><th></th></tr></thead>
     <tbody>
       {% for a in job.attempts %}
       <tr>
         <td>{{ a.board.name }}</td>
         <td><span class="badge {{ a.status.value }}">{{ a.status.value }}</span>
             {% if a.retry_count %}<span class="muted">·{{ a.retry_count }}×</span>{% endif %}</td>
-        <td class="muted">
-          {{ a.error_message or '—' }}
-          {% if a.screenshot_path %}<br><a href="/attempts/{{ a.id }}/screenshot" target="_blank">failure screenshot ↗</a>{% endif %}
-        </td>
         <td>
           {% if a.result_url %}
           <a href="{{ a.result_url }}" target="_blank">View post ↗</a>
           <details style="margin-top:4px">
             <summary class="muted" style="font-size:11px; cursor:pointer">edit link</summary>
             <form method="post" action="/attempts/{{ a.id }}/result_url" style="margin:4px 0 0; display:flex; gap:4px">
-              <input type="url" name="result_url" value="{{ a.result_url }}" style="font-size:11px; padding:3px 6px; width:130px">
+              <input type="url" name="result_url" value="{{ a.result_url }}" style="font-size:11px; padding:3px 6px; min-width:0; flex:1">
               <button class="btn small secondary" type="submit">Save</button>
             </form>
           </details>
           {% else %}
-          <form method="post" action="/attempts/{{ a.id }}/result_url" style="margin:0; display:flex; gap:4px">
-            <input type="url" name="result_url" value="" placeholder="paste post URL" style="font-size:11px; padding:3px 6px; width:130px">
+          <form method="post" action="/attempts/{{ a.id }}/result_url" style="margin:0; display:flex; gap:4px; flex-wrap:wrap">
+            <input type="url" name="result_url" value="" placeholder="paste post URL" style="font-size:11px; padding:3px 6px; min-width:90px; flex:1">
             <button class="btn small secondary" type="submit">Save</button>
           </form>
           {% endif %}
         </td>
-        <td class="mono">{{ a.resolved_apply_url or '—' }}</td>
+        <td class="mono wrap-url">{{ a.resolved_apply_url or '—' }}</td>
+        <td class="muted wrap-text">
+          {{ a.error_message or '—' }}
+          {% if a.screenshot_path %}<br><a href="/attempts/{{ a.id }}/screenshot" target="_blank">failure screenshot ↗</a>{% endif %}
+        </td>
         <td>
           {% if a.status.value in ['failed','skipped','pending_retry'] %}
           <form method="post" action="/attempts/{{ a.id }}/retry" style="margin:0">

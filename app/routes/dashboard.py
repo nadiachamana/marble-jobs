@@ -105,6 +105,26 @@ def review(job_id: str, request: Request, db: Session = Depends(get_db)):
     for b in boards:
         grouped.setdefault(b.distribution_type.value, []).append(b)
 
+    # Board-specific requirements: canonical fields the currently selected
+    # boards mark required but the job has no value for. Rendered as extra
+    # inputs under "Confirm or adjust"; values persist into job.canonical.
+    from app import validation
+    from app.schema import get_field
+
+    selected = set(defaults)
+    extras: dict[str, dict] = {}
+    for b in boards:
+        if b.id not in selected or not (b.required_fields or []):
+            continue
+        for key in validation.missing_required(job, b):
+            f = get_field(key)
+            entry = extras.setdefault(key, {
+                "label": validation.field_label(key),
+                "enum": list(f.enum) if (f and f.enum) else [],
+                "boards": [],
+            })
+            entry["boards"].append(b.name)
+
     attempts = {a.board_id: a for a in job.attempts}
     return templates.TemplateResponse(
         request,
@@ -115,6 +135,7 @@ def review(job_id: str, request: Request, db: Session = Depends(get_db)):
             "defaults": set(defaults),
             "attempts": attempts,
             "DistributionType": DistributionType,
+            "extras": extras,
         },
     )
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Form
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
@@ -30,36 +30,43 @@ def _parse_int(value: str) -> int | None:
 
 
 @router.post("/jobs/{job_id}/review")
-def save_review(
+async def save_review(
     job_id: str,
+    request: Request,
     db: Session = Depends(get_db),
-    seniority: str = Form(default=""),
-    function_category: str = Form(default=""),
-    industry_tags: str = Form(default=""),
-    location_city: str = Form(default=""),
-    salary_min: str = Form(default=""),
-    salary_max: str = Form(default=""),
-    salary_currency: str = Form(default=""),
-    deadline: str = Form(default=""),
-    board_ids: list[str] = Form(default=[]),
 ):
+    # Parsed manually (not via Form params) because the review page also posts
+    # dynamic "extra__<canonical key>" inputs — board-specific required fields.
+    form = await request.form()
     job = db.get(JobQueue, job_id)
     if job is None:
         return RedirectResponse(url="/", status_code=303)
 
-    job.seniority = seniority or None
-    job.function_category = function_category or None
-    job.industry_tags = [t.strip() for t in industry_tags.split(",") if t.strip()]
-    job.location_city = location_city or None
-    job.salary_min = _parse_int(salary_min)
-    job.salary_max = _parse_int(salary_max)
-    job.salary_currency = salary_currency or None
+    job.seniority = (form.get("seniority") or "").strip() or None
+    job.function_category = (form.get("function_category") or "").strip() or None
+    job.industry_tags = [t.strip() for t in (form.get("industry_tags") or "").split(",") if t.strip()]
+    job.location_city = (form.get("location_city") or "").strip() or None
+    job.salary_min = _parse_int(form.get("salary_min") or "")
+    job.salary_max = _parse_int(form.get("salary_max") or "")
+    job.salary_currency = (form.get("salary_currency") or "").strip() or None
+    deadline = (form.get("deadline") or "").strip()
     if deadline:
         try:
             job.deadline = datetime.fromisoformat(deadline)
         except ValueError:
             pass
-    job.selected_board_ids = board_ids
+    job.selected_board_ids = form.getlist("board_ids")
+
+    # Board-specific extras → the job's canonical payload, where every engine
+    # (auto, hold, assisted) and the pre-flight validator read values from.
+    canonical = dict(job.canonical or {})
+    for key in form.keys():
+        if key.startswith("extra__"):
+            value = (form.get(key) or "").strip()
+            if value:
+                canonical[key[len("extra__"):]] = value
+    job.canonical = canonical
+
     job.reviewed_at = _now()
     if job.status == JobStatus.pending:
         job.status = JobStatus.reviewed
@@ -68,25 +75,14 @@ def save_review(
 
 
 @router.post("/jobs/{job_id}/dispatch")
-def dispatch(
+async def dispatch(
     job_id: str,
+    request: Request,
     background: BackgroundTasks,
     db: Session = Depends(get_db),
-    seniority: str = Form(default=""),
-    function_category: str = Form(default=""),
-    industry_tags: str = Form(default=""),
-    location_city: str = Form(default=""),
-    salary_min: str = Form(default=""),
-    salary_max: str = Form(default=""),
-    salary_currency: str = Form(default=""),
-    deadline: str = Form(default=""),
-    board_ids: list[str] = Form(default=[]),
 ):
     # Persist the latest form edits first (same fields as save_review).
-    save_review(
-        job_id, db, seniority, function_category, industry_tags, location_city,
-        salary_min, salary_max, salary_currency, deadline, board_ids,
-    )
+    await save_review(job_id, request, db)
     job = db.get(JobQueue, job_id)
     if job is None or not job.selected_board_ids:
         return RedirectResponse(url=f"/jobs/{job_id}?error=no_boards", status_code=303)

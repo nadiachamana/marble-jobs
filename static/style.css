@@ -53,6 +53,18 @@ h2 { font-size: 16px; margin: 28px 0 12px; color: var(--text); }
 }
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+/* Posting-status table: fixed column budget so long URLs / error text wrap
+   inside the panel instead of pushing columns past its edge. */
+.posting-table { table-layout: fixed; }
+.posting-table th:nth-child(1) { width: 15%; }  /* board */
+.posting-table th:nth-child(2) { width: 11%; }  /* status */
+.posting-table th:nth-child(3) { width: 17%; }  /* live post */
+.posting-table th:nth-child(4) { width: 24%; }  /* apply url */
+.posting-table th:nth-child(5) { width: 25%; }  /* detail / error */
+.posting-table th:nth-child(6) { width: 8%; }   /* actions */
+.posting-table td { vertical-align: top; }
+.wrap-url { word-break: break-all; font-size: 12px; }
+.wrap-text { overflow-wrap: break-word; }
 th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .4px; }
 tr:last-child td { border-bottom: none; }
 .badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; }

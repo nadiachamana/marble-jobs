@@ -209,6 +209,16 @@ def assist(job_id: str, board_name: str) -> None:
             input("\n   …then press Enter HERE to auto-fill it. ")
 
             filled, skipped = _fill(page, board, fields)
+            # Prompt-to-post AI pass: whatever the mapped fill left empty
+            # (unmatched select labels, capped dates, unmapped controls).
+            try:
+                from app.posting.smartfill import smart_fill_sync
+
+                ai_filled = smart_fill_sync(page, fields)
+                if ai_filled:
+                    filled = filled + [f"{name} (AI)" for name in ai_filled]
+            except Exception as exc:  # noqa: BLE001 — AI layer is best-effort
+                print(f"   ⚠ AI fill pass failed: {str(exc)[:70]}")
             print(f"\n   ✓ auto-filled {len(filled)} field(s): {', '.join(filled) or '(none)'}")
             if skipped:
                 print(f"   ⊘ couldn't auto-fill {len(skipped)} — fill these by hand:")

@@ -119,6 +119,11 @@ def _selector(f: dict) -> str | None:
         return sel
     if name and (sel := _attr_sel("name", name)):
         return sel
+    # React form builders (Fillout, Typeform-style) render inputs with no
+    # id/name but a unique aria-label — a perfectly stable selector.
+    aria = f.get("aria") or ""
+    if aria and (sel := _attr_sel("aria-label", aria)):
+        return f"{f['tag']}{sel}"
     # Rich-text editors (Summernote & co) often have no id/name — address by
     # their first class ("div.note-editable"). Page-scoped fills keep it unique.
     cls = f.get("cls") or ""
@@ -268,6 +273,7 @@ _EVAL = """els => els.map(e => {
     const cls = (typeof e.className === 'string' ? e.className : '').trim().split(/\\s+/)[0] || '';
     const checked = (type==='radio' || type==='checkbox') ? !!e.checked : undefined;
     return { tag, type, role, id: e.id||'', name: e.getAttribute('name')||'', ph: e.getAttribute('placeholder')||'',
+             aria: (e.getAttribute('aria-label')||'').slice(0,90),
              text: (e.textContent||'').trim().slice(0,40), label: label.slice(0,90),
              widget, options: opts, required, vis, cls, checked };
 })"""
@@ -783,7 +789,11 @@ def build_from_classification(controls: list[dict], classification: dict) -> dic
             if ctrl.get("required") and key not in required_fields:
                 required_fields.append(key)
             continue
-        if not key or key == "UNMAPPED" or key not in S.MASTER_SCHEMA or conf < 0.5 or key in used_keys:
+        # A bare tag ("input") means the control had no stable selector — using
+        # it would type several fields into the first box on the page. Skip it,
+        # same as the heuristic mapper does.
+        if not key or key == "UNMAPPED" or key not in S.MASTER_SCHEMA or conf < 0.5 or key in used_keys \
+                or sel in ("input", "textarea", "select", "button"):
             if ctrl.get("required"):
                 unresolved_required.append(f"{ctrl.get('label') or sel}")
             continue
