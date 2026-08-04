@@ -89,12 +89,28 @@ def _fill(page, board, fields: dict) -> tuple[list[str], list[str]]:
                     page.locator(selector).first.fill(value, timeout=FILL_TIMEOUT_MS)
                 filled.append(master_field)
                 continue
+            if kind in ("aria_radio", "aria_check"):
+                # ARIA pill group — click the pill(s) matching the value(s).
+                values = [v.strip() for v in value.split(",")] if kind == "aria_check" else [value]
+                for v in values:
+                    page.locator(selector).get_by_text(v, exact=False).first.click(timeout=FILL_TIMEOUT_MS)
+                filled.append(master_field)
+                continue
             loc = page.locator(selector).first
             loc.scroll_into_view_if_needed(timeout=FILL_TIMEOUT_MS)
             if kind == "select":
                 loc.select_option(label=value, timeout=FILL_TIMEOUT_MS)
             elif kind == "check":
                 loc.check(timeout=FILL_TIMEOUT_MS)
+            elif kind == "react_select":
+                loc.click(timeout=FILL_TIMEOUT_MS)
+                loc.fill(value, timeout=FILL_TIMEOUT_MS)
+                page.wait_for_timeout(600)
+                option = page.locator(f"[role=option]:has-text(\"{value[:40]}\")").first
+                if option.count():
+                    option.click(timeout=FILL_TIMEOUT_MS)
+                else:
+                    page.keyboard.press("Enter")
             else:
                 loc.fill(value, timeout=FILL_TIMEOUT_MS)
             filled.append(master_field)

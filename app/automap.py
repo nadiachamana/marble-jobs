@@ -280,6 +280,80 @@ _EVAL = """els => els.map(e => {
 
 _HEADINGS_EVAL = "els => els.map(e => (e.innerText||'').trim()).filter(Boolean).slice(0, 8)"
 
+# ARIA pill/choice groups (Fillout, Typeform & co): DIVs with role=radiogroup /
+# role=group whose "options" are clickable [role=radio]/[role=checkbox] children
+# — invisible to the input/select scan, which is how Baby VC's Contract/Sector
+# questions were never discovered.
+_GROUPS_EVAL = """els => els.map(e => {
+    if (!e.getClientRects().length) return null;
+    const radios = [...e.querySelectorAll('[role=radio]')];
+    const checks = [...e.querySelectorAll('[role=checkbox]')];
+    const members = radios.length ? radios : checks;
+    if (!members.length) return null;
+    const optText = m => {
+      let t = (m.innerText||'').trim();
+      if (!t && m.parentElement) t = (m.parentElement.innerText||'').trim();
+      if (!t && m.closest('label')) t = (m.closest('label').innerText||'').trim();
+      return t.split('\\n')[0].slice(0, 60);
+    };
+    let options = [...new Set(members.map(optText).filter(Boolean))];
+    if (!options.length) {
+      // Some builders (Fillout checkbox pills) keep the text outside the
+      // [role=checkbox] element — fall back to the group's own text lines.
+      options = [...new Set((e.innerText||'').split('\\n').map(t => t.trim())
+                  .filter(t => t && t.length < 60))];
+    }
+    if (!options.length) return null;
+    const checked = members.some(m => m.getAttribute('aria-checked') === 'true');
+    return { aria: (e.getAttribute('aria-label')||'').slice(0,90),
+             kind: radios.length ? 'aria_radio' : 'aria_check',
+             options: options.slice(0, 30), checked };
+}).filter(Boolean)"""
+
+
+async def scan_choice_groups(page) -> list[dict]:
+    """Discover ARIA pill groups as pseudo-controls (widget aria_radio/aria_check).
+
+    Only groups with an aria-label are addressable (`[role=radiogroup]
+    [aria-label='…']`); unlabeled ones are skipped."""
+    try:
+        raw = await page.eval_on_selector_all("[role=radiogroup], [role=group]", _GROUPS_EVAL)
+    except Exception:  # noqa: BLE001
+        return []
+    out = []
+    for g in raw:
+        aria = g.get("aria") or ""
+        if not aria:
+            continue
+        sel = _attr_sel("aria-label", aria)
+        if not sel:
+            continue
+        role = "radiogroup" if g["kind"] == "aria_radio" else "group"
+        out.append({
+            "tag": "div", "type": "", "id": "", "name": "", "ph": "", "cls": "",
+            "label": aria, "aria": aria, "widget": g["kind"], "options": g["options"],
+            "required": False, "vis": True, "checked": g.get("checked"),
+            "selector": f"[role={role}]{sel}",
+        })
+    return out
+
+
+async def harvest_combo_options(page, selector: str) -> list[str]:
+    """React-select style dropdowns keep their options OUT of the DOM until
+    clicked — click, scrape the revealed [role=option] list, Escape."""
+    try:
+        await page.locator(selector).first.click(timeout=3000)
+        await page.wait_for_timeout(700)
+        opts = await page.eval_on_selector_all(
+            "[role=option]",
+            "els => [...new Set(els.filter(e => e.getClientRects().length)"
+            ".map(e => (e.innerText||'').trim()).filter(Boolean))].slice(0, 50)")
+        await page.keyboard.press("Escape")
+        await page.wait_for_timeout(250)
+        return opts
+    except Exception:  # noqa: BLE001
+        return []
+
 
 async def _headings(page) -> list[str]:
     try:
@@ -449,6 +523,17 @@ async def _fill_sample(page, fields: list[dict], everything: bool = False) -> No
     Never overwrites values already present (e.g. a prefilled publish date)."""
     seen_groups: set[str] = set()
     for f in fields:
+        # ARIA pill groups: pick the first option so validation lets Next pass.
+        if f.get("widget") in ("aria_radio", "aria_check"):
+            if f.get("checked") or not (f.get("required") or everything):
+                continue
+            try:
+                first_opt = (f.get("options") or [""])[0]
+                if first_opt and f.get("selector"):
+                    await page.locator(f["selector"]).get_by_text(first_opt, exact=False).first.click(timeout=2000)
+            except Exception:  # noqa: BLE001
+                pass
+            continue
         if f["tag"] not in ("input", "textarea", "select") or f.get("widget") == "button":
             continue
         if (f.get("type") or "").lower() in ("hidden", "submit", "button", "file", "image"):
@@ -549,6 +634,20 @@ async def inspect_form(post_url: str, login: dict | None, creds: tuple,
             if not f.get("vis", True) and re.search(r"\d{6,}", f.get("id") or ""):
                 continue
             out_fields.append(f)
+        # ARIA pill groups (role=radiogroup/group) — not inputs, scanned apart.
+        out_fields.extend(await scan_choice_groups(page))
+        # React-select dropdowns hide their options until clicked — harvest
+        # them so classification can build a value_map (cap the clicking).
+        harvested = 0
+        for f in out_fields:
+            if f.get("widget") == "react_select" and not f.get("options") and harvested < 6:
+                sel = _selector(f)
+                if not sel:
+                    continue
+                opts = await harvest_combo_options(page, sel)
+                if opts:
+                    f["options"] = opts
+                harvested += 1
         return out_fields
 
     out: dict = {"fields": [], "bot_challenge": False, "needs_login": False,
@@ -674,6 +773,8 @@ _WIDGET_TYPE = {
     "react_select": "react_select",
     "checkbox": "check",
     "radio": "radio",
+    "aria_radio": "aria_radio",
+    "aria_check": "aria_check",
 }
 
 
@@ -869,7 +970,9 @@ async def automap_board(board: BoardConfig) -> dict:
     form_layout = ((board.meta or {}).get("form_layout") or "auto").lower()
 
     insp = await inspect_form(board.post_url, login, creds, form_layout=form_layout)
-    controls = [dict(f, selector=_selector(f) or f.get("tag")) for f in insp["fields"]]
+    # Choice groups arrive with a pre-built group selector — keep it.
+    controls = [dict(f, selector=f.get("selector") or _selector(f) or f.get("tag"))
+                for f in insp["fields"]]
 
     coverage: dict = {}
     proposals: list = []

@@ -95,7 +95,7 @@ async def _collect_gaps(page) -> list[dict]:
         "input, textarea, select, [contenteditable=true]", _GAP_EVAL)
     checked_groups = {c.get("name") for c in controls
                       if c.get("type") in ("radio", "checkbox") and c.get("value") == "checked"}
-    gaps, seen_groups = [], set()
+    gaps = []
     for c in controls:
         if not c.get("vis") or c.get("value"):
             continue
@@ -110,9 +110,56 @@ async def _collect_gaps(page) -> list[dict]:
             continue
         c["selector"] = sel
         gaps.append(c)
+
+    # ARIA pill groups (Fillout-style clickable choices) with nothing selected.
+    try:
+        from app.automap import scan_choice_groups
+
+        for g in await scan_choice_groups(page):
+            if not g.get("checked"):
+                gaps.append(g)
+    except Exception:  # noqa: BLE001
+        pass
+
+    # React-select combos hide options until clicked — harvest so the model
+    # picks from REAL options instead of guessing.
+    harvested = 0
+    for c in gaps:
+        if "react-select" in (c.get("id") or "") and not c.get("options") and harvested < 5:
+            c["widget"] = "react_select"
+            try:
+                from app.automap import harvest_combo_options
+
+                opts = await harvest_combo_options(page, c["selector"])
+                if opts:
+                    c["options"] = opts
+            except Exception:  # noqa: BLE001
+                pass
+            harvested += 1
+
     # Cap payload size; required first so they never fall off the end.
     gaps.sort(key=lambda c: not c.get("required"))
     return gaps[:40]
+
+
+async def _apply_select(page, sel: str, ctrl: dict, labels: list[str]) -> None:
+    """Apply a validated 'select' action to whatever widget the control is."""
+    widget = ctrl.get("widget")
+    if widget in ("aria_radio", "aria_check"):
+        for v in labels:
+            await page.locator(sel).get_by_text(v, exact=False).first.click(timeout=_FILL_TIMEOUT)
+    elif widget == "react_select":
+        for v in labels[:3]:
+            await page.locator(sel).first.click(timeout=_FILL_TIMEOUT)
+            await page.fill(sel, v, timeout=_FILL_TIMEOUT)
+            await page.wait_for_timeout(600)
+            option = page.locator(f"[role=option]:has-text(\"{v[:40]}\")").first
+            if await option.count():
+                await option.click(timeout=_FILL_TIMEOUT)
+            else:
+                await page.keyboard.press("Enter")
+    else:
+        await page.select_option(sel, label=labels, timeout=_FILL_TIMEOUT)
 
 
 def _job_payload(fields: dict) -> dict:
@@ -193,7 +240,7 @@ async def smart_fill(page, fields: dict) -> list[str]:
                 legit = [v for v in values if v in (ctrl.get("options") or [])]
                 if not legit:
                     continue
-                await page.select_option(sel, label=legit, timeout=_FILL_TIMEOUT)
+                await _apply_select(page, sel, ctrl, legit)
             elif action == "check":
                 await page.locator(sel).first.check(timeout=_FILL_TIMEOUT)
             elif action == "fill":
@@ -247,6 +294,39 @@ def smart_fill_sync(page, fields: dict) -> list[str]:
             continue
         c["selector"] = sel
         gaps.append(c)
+
+    # ARIA pill groups + react-select option harvest (sync mirrors).
+    try:
+        from app.automap import _GROUPS_EVAL, _attr_sel
+
+        for g in page.eval_on_selector_all("[role=radiogroup], [role=group]", _GROUPS_EVAL):
+            aria = g.get("aria") or ""
+            sel = _attr_sel("aria-label", aria) if aria else None
+            if not sel or g.get("checked"):
+                continue
+            role = "radiogroup" if g["kind"] == "aria_radio" else "group"
+            gaps.append({"tag": "div", "label": aria, "widget": g["kind"],
+                         "options": g["options"], "required": False,
+                         "selector": f"[role={role}]{sel}"})
+    except Exception:  # noqa: BLE001
+        pass
+    harvested = 0
+    for c in gaps:
+        if "react-select" in (c.get("id") or "") and not c.get("options") and harvested < 5:
+            c["widget"] = "react_select"
+            try:
+                page.locator(c["selector"]).first.click(timeout=3000)
+                page.wait_for_timeout(700)
+                c["options"] = page.eval_on_selector_all(
+                    "[role=option]",
+                    "els => [...new Set(els.filter(e => e.getClientRects().length)"
+                    ".map(e => (e.innerText||'').trim()).filter(Boolean))].slice(0, 50)")
+                page.keyboard.press("Escape")
+                page.wait_for_timeout(250)
+            except Exception:  # noqa: BLE001
+                pass
+            harvested += 1
+
     gaps.sort(key=lambda c: not c.get("required"))
     gaps = gaps[:40]
     if not gaps:
@@ -289,7 +369,22 @@ def smart_fill_sync(page, fields: dict) -> list[str]:
                 legit = [v for v in values if v in (ctrl.get("options") or [])]
                 if not legit:
                     continue
-                page.select_option(sel, label=legit, timeout=_FILL_TIMEOUT)
+                widget = ctrl.get("widget")
+                if widget in ("aria_radio", "aria_check"):
+                    for v in legit:
+                        page.locator(sel).get_by_text(v, exact=False).first.click(timeout=_FILL_TIMEOUT)
+                elif widget == "react_select":
+                    for v in legit[:3]:
+                        page.locator(sel).first.click(timeout=_FILL_TIMEOUT)
+                        page.fill(sel, v, timeout=_FILL_TIMEOUT)
+                        page.wait_for_timeout(600)
+                        option = page.locator(f"[role=option]:has-text(\"{v[:40]}\")").first
+                        if option.count():
+                            option.click(timeout=_FILL_TIMEOUT)
+                        else:
+                            page.keyboard.press("Enter")
+                else:
+                    page.select_option(sel, label=legit, timeout=_FILL_TIMEOUT)
             elif action == "check":
                 page.locator(sel).first.check(timeout=_FILL_TIMEOUT)
             elif action == "fill":

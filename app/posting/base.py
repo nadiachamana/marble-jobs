@@ -348,11 +348,29 @@ async def fill_form(page, field_map: dict, select_map: dict, fields: dict[str, A
                 else:  # plain contenteditable element
                     await page.locator(selector).fill(value, timeout=FILL_TIMEOUT_MS)
             elif kind == "react_select":
-                # react-select combobox: focus, type to filter, pick the match.
+                # react-select combobox: focus, type to filter, then click the
+                # matching revealed option (blind Enter picks the wrong row
+                # when the filter didn't narrow to one).
                 await page.click(selector, timeout=FILL_TIMEOUT_MS)
                 await page.fill(selector, value, timeout=FILL_TIMEOUT_MS)
-                await page.wait_for_timeout(500)
-                await page.keyboard.press("Enter")
+                await page.wait_for_timeout(600)
+                option = page.locator(f"[role=option]:has-text(\"{value[:40]}\")").first
+                if await option.count():
+                    await option.click(timeout=FILL_TIMEOUT_MS)
+                else:
+                    await page.keyboard.press("Enter")
+            elif kind in ("aria_radio", "aria_check"):
+                # ARIA pill group (selector targets the [role=radiogroup]/group
+                # itself); click the pill(s) whose text matches the value(s).
+                values = [v.strip() for v in value.split(",")] if kind == "aria_check" else [value]
+                hit = False
+                for v in values:
+                    pill = page.locator(selector).get_by_text(v, exact=False).first
+                    if await pill.count():
+                        await pill.click(timeout=FILL_TIMEOUT_MS)
+                        hit = True
+                if not hit:
+                    raise ValueError(f"no pill matching {value!r}")
             else:
                 await page.fill(selector, value, timeout=FILL_TIMEOUT_MS)
             filled.append(master_field)
