@@ -67,10 +67,9 @@ async def _dispatch_one(session, job, board) -> PostingStatus:
     # Point the operator at assisted mode rather than failing on the challenge.
     if board.requires_assist:
         attempt.status = PostingStatus.skipped
-        attempt.error_message = (
-            f"Requires assisted mode ({board.assist_reason or 'bot-challenge'}). "
-            f'Run locally: python -m app.assist {job.id} "{board.name}"'
-        )
+        # The dashboard renders the ready-to-copy assisted command on every
+        # skipped/failed row — no need to embed it in the message.
+        attempt.error_message = f"Requires assisted mode ({board.assist_reason or 'bot-challenge'})."
         attempt.finished_at = _now()
         session.commit()
         return attempt.status

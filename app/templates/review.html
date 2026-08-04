@@ -152,6 +152,18 @@
         <td class="muted wrap-text">
           {{ a.error_message or '—' }}
           {% if a.screenshot_path %}<br><a href="/attempts/{{ a.id }}/screenshot" target="_blank">failure screenshot ↗</a>{% endif %}
+          {% if a.status.value in ['failed', 'skipped', 'pending_retry'] %}
+          {# Rescue path: run this board locally in assisted mode. Boards with a
+             working map get --hold (engine fills, human clicks submit). #}
+          {% set hold = '' if a.board.requires_assist else ' --hold' %}
+          <div class="assist-cmd">
+            <span style="font-size:11px">Or post it locally (assisted mode):</span>
+            <code id="cmd_{{ a.id }}">HTTPS_PROXY="" HTTP_PROXY="" no_proxy="*" venv/bin/python -m app.assist {{ job.id }} "{{ a.board.name }}"{{ hold }}</code>
+            <button type="button" class="btn small secondary"
+                    onclick="navigator.clipboard.writeText(document.getElementById('cmd_{{ a.id }}').innerText); this.innerText='Copied ✓'; setTimeout(() => this.innerText='Copy command', 1500)">
+              Copy command</button>
+          </div>
+          {% endif %}
         </td>
         <td>
           {% if a.status.value in ['failed','skipped','pending_retry'] %}
